@@ -34,6 +34,9 @@ pub mod error;
 pub mod publisher;
 pub mod subscriber;
 
+#[cfg(test)]
+pub mod media_driver;
+
 pub use error::*;
 pub use publisher::RusteronPublisher;
 pub use subscriber::RusteronSubscriber;

@@ -13,19 +13,23 @@ Implement the transport traits for Rusteron, the wrapper around the official C++
 
 ## What Changes
 - Add Rusteron dependency with optional `rusteron` feature flag
-- Implement `AeronPublisher` trait for Rusteron publication
-- Implement `AeronSubscriber` trait for Rusteron subscription
+- Implement `AeronPublisher` trait for Rusteron publication (offer method working, try_claim has TODO)
+- Implement `AeronSubscriber` trait for Rusteron subscription (poll method working)
 - Map Rusteron errors to common `TransportError` type
-- Ensure zero-copy patterns using Rusteron's buffer access APIs
-- Document any latency compromises or clone/copy cases with explanations
-- Provide examples demonstrating Rusteron usage
+- Document latency compromises or clone/copy cases with explanations
+- Add build script to detect Aeron Media Driver installation
+- Create media driver helper module for integration tests
 - Add unit tests verifying trait implementation (using manual test doubles per testing strategy)
+- Create comprehensive README documenting status and requirements
 - Use standard Rust formatting with `rustfmt`
 
 ## Impact
 - Affected specs: `rusteron-adapter` (new capability)
-- Affected code: Creates `src/transport/rusteron/` module
-- Dependencies: Adds `rusteron` as optional dependency (requires C++ toolchain)
+- Affected code: Creates `src/transport/rusteron/` module, adds `build.rs`, creates `README.md`
+- Dependencies: Adds `rusteron-client` as optional dependency (requires C++ toolchain)
 - Builds on: `add-transport-traits` (requires traits to be defined first)
-- User value: Working Aeron publisher and subscriber for production HFT systems
+- User value: Functional Aeron publisher (offer) and subscriber (poll) for production HFT systems
 - Testing: Unit tests with manual test implementations per project testing strategy
+- Build infrastructure: Detects media driver, provides helper for integration tests
+- Documentation: Comprehensive README with status, requirements, and quick start
+- Status: **Partial implementation** - 39/44 tasks complete (89%)

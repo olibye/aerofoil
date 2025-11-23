@@ -1,231 +1,96 @@
 # Mocking Strategy
 
-This document explains when and how to use mockall for test mocking in the aerofoil project.
+Guidelines for test mocking in the aerofoil project.
+
+## Core Testing Principles
+
+1. **NEVER write ignored tests** - Ignored tests prove nothing and rot over time
+2. **Unit tests should not require external dependencies** - Use mocks/manual implementations
+3. **Integration tests must be self-contained** - Automatically start/stop dependencies
+4. **All tests must be runnable via `cargo test`** - No manual setup required
 
 ## When to Use Mockall
 
-Use mockall's `#[automock]` attribute for traits that have:
+Use mockall's `#[automock]` attribute for traits with:
 
-- **Simple method signatures**: Methods without complex lifetime parameters
-- **No generic closures**: Trait methods that don't take generic `FnMut` or `Fn` parameters
-- **Standard return types**: Methods returning simple types, `Result<T, E>`, or boxed futures
-- **No associated lifetimes in generics**: Avoid `#[automock]` if method generics reference `self`'s lifetime
+- **Simple method signatures**: No complex lifetime parameters
+- **No generic closures**: No `FnMut` or `Fn` parameters in trait methods
+- **Standard return types**: Simple types, `Result<T, E>`, or boxed futures
+- **No associated lifetimes in generics**: Method generics don't reference `self`'s lifetime
 
-### Example - Good for mockall
+**Example traits suitable for mockall:**
+- Simple getters/setters
+- Configuration interfaces
+- I/O abstractions without lifetime constraints
+- State management interfaces
 
-```rust
-#[cfg_attr(test, automock)]
-pub trait DataStore {
-    fn get(&self, key: &str) -> Result<String, Error>;
-    fn put(&mut self, key: String, value: String) -> Result<(), Error>;
-}
-```
-
-**In tests:**
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_data_retrieval() {
-        // Given
-        let mut mock = MockDataStore::new();
-        mock.expect_get()
-            .with(eq("key1"))
-            .returning(|_| Ok("value1".to_string()));
-
-        // When
-        let result = mock.get("key1");
-
-        // Then
-        assert_eq!(result.unwrap(), "value1");
-    }
-}
-```
+See `#[automock]` usage in `#[cfg(test)] mod tests` blocks within modules for working examples.
 
 ## When NOT to Use Mockall
 
-Provide **manual test implementations** for traits that have:
+Provide **manual test implementations** for traits with:
 
 - **Explicit lifetime parameters**: Methods like `fn claim<'a>(&'a mut self) -> Buffer<'a>`
 - **Generic closure parameters**: Methods like `fn poll<F: FnMut(&Item)>(&mut self, handler: F)`
-- **Complex associated types with lifetimes**: GATs (Generic Associated Types) with lifetime constraints
+- **Complex associated types with lifetimes**: GATs with lifetime constraints
 - **High-rank trait bounds**: Methods with `for<'a>` syntax
 
 ### Why Mockall Fails on These
 
 - Mockall's procedural macro cannot generate correct lifetime relationships
-- Generic closures create lifetime constraints that mockall can't express
-- Results in compilation errors like "parameter type may not live long enough"
+- Generic closures create lifetime constraints mockall can't express
+- Results in compilation errors about lifetime requirements
 
-### Example - Manual Implementation Required
+**Example traits requiring manual implementation:**
+- `AeronPublisher` (has `try_claim<'a>` with lifetime-bound return)
+- `AeronSubscriber` (has `poll<F: FnMut>` with generic closure)
+- Buffer management traits with lifetime-bound views
 
-```rust
-// DON'T use #[automock] - mockall can't handle this
-pub trait AeronPublisher {
-    fn try_claim<'a>(&'a mut self, len: usize) -> Result<Buffer<'a>, Error>;
-}
-
-// Instead, implement manually for tests:
-#[cfg(test)]
-struct TestPublisher {
-    buffers: Vec<Vec<u8>>,
-}
-
-#[cfg(test)]
-impl AeronPublisher for TestPublisher {
-    fn try_claim<'a>(&'a mut self, len: usize) -> Result<Buffer<'a>, Error> {
-        self.buffers.push(vec![0u8; len]);
-        Ok(Buffer::new(self.buffers.last_mut().unwrap()))
-    }
-}
-```
-
-**In tests:**
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_publisher_claim() {
-        // Given
-        let mut publisher = TestPublisher { buffers: Vec::new() };
-
-        // When
-        let mut claim = publisher.try_claim(256).unwrap();
-        claim[0..5].copy_from_slice(b"hello");
-
-        // Then
-        assert_eq!(&publisher.buffers[0][0..5], b"hello");
-    }
-}
-```
+See `#[cfg(test)] mod tests` blocks in transport modules for working manual test implementation examples.
 
 ## Guidelines for Manual Test Implementations
 
 When mockall is not suitable:
 
-1. **Keep it simple**: Manual test implementations should be ~10-30 lines
+1. **Keep it simple**: Manual implementations should be ~10-30 lines
 2. **Store test data**: Use `Vec`, `VecDeque`, or similar collections to capture calls
-3. **Add helper methods**: Provide inspection methods (e.g., `messages()`) for assertions
+3. **Add helper methods**: Provide inspection methods for assertions (e.g., `messages()`)
 4. **Document the pattern**: Add comments explaining why manual implementation is needed
-5. **Provide examples**: Include manual implementations in `tests.rs` as examples for users
+5. **Provide examples**: Include manual implementations in `tests.rs` as reference
 
-### Pattern: Capturing Method Calls
+### Common Patterns
 
-```rust
-#[cfg(test)]
-struct TestPublisher {
-    messages: Vec<Vec<u8>>,
-    next_position: i64,
-}
+**Capturing Method Calls:**
+- Store inputs in a `Vec` or `VecDeque`
+- Track state changes
+- Return predictable test values
 
-#[cfg(test)]
-impl TestPublisher {
-    fn new() -> Self {
-        Self {
-            messages: Vec::new(),
-            next_position: 0,
-        }
-    }
+**Injecting Test Data:**
+- Provide helper methods to inject test messages
+- Pop from queue during trait method calls
+- Return injected data to test code
 
-    // Helper method for test assertions
-    fn messages(&self) -> &[Vec<u8>] {
-        &self.messages
-    }
-}
-
-#[cfg(test)]
-impl AeronPublisher for TestPublisher {
-    fn offer(&mut self, buffer: &[u8]) -> Result<i64, TransportError> {
-        let pos = self.next_position;
-        self.next_position += buffer.len() as i64;
-        self.messages.push(buffer.to_vec());
-        Ok(pos)
-    }
-
-    fn try_claim<'a>(&'a mut self, length: usize) -> Result<ClaimBuffer<'a>, TransportError> {
-        let pos = self.next_position;
-        self.next_position += length as i64;
-        self.messages.push(vec![0u8; length]);
-        let buf = self.messages.last_mut().unwrap();
-        Ok(ClaimBuffer::new(buf, pos))
-    }
-}
-```
-
-### Pattern: Injecting Test Data
-
-```rust
-#[cfg(test)]
-struct TestSubscriber {
-    messages: VecDeque<Vec<u8>>,
-    next_position: i64,
-}
-
-#[cfg(test)]
-impl TestSubscriber {
-    fn new() -> Self {
-        Self {
-            messages: VecDeque::new(),
-            next_position: 0,
-        }
-    }
-
-    // Helper method to inject test messages
-    fn inject(&mut self, data: Vec<u8>) {
-        self.messages.push_back(data);
-    }
-}
-
-#[cfg(test)]
-impl AeronSubscriber for TestSubscriber {
-    fn poll<F>(&mut self, mut handler: F) -> Result<usize, TransportError>
-    where
-        F: FnMut(&FragmentBuffer) -> Result<(), TransportError>,
-    {
-        let mut count = 0;
-        while let Some(msg) = self.messages.pop_front() {
-            let pos = self.next_position;
-            self.next_position += msg.len() as i64;
-
-            let header = FragmentHeader {
-                position: pos,
-                session_id: 1,
-                stream_id: 1,
-            };
-            let fragment = FragmentBuffer::new(&msg, header);
-            handler(&fragment)?;
-            count += 1;
-        }
-        Ok(count)
-    }
-}
-```
+**Example locations:**
+- Look for `#[cfg(test)] mod tests` at the bottom of each module
+- Manual test implementations are inline with the code they test
 
 ## Decision Tree
 
-Use this flowchart to decide which mocking approach to use:
+**Does the trait have any of these?**
+- Methods with explicit lifetime parameters like `<'a>`
+- Methods with generic closures like `<F: FnMut>`
+- GATs or complex associated types
 
-```
-Does the trait have any of these?
-  - Methods with explicit lifetime parameters like <'a>
-  - Methods with generic closures like <F: FnMut>
-  - GATs or complex associated types
+**YES** → Use manual test implementation
+- Write inline in `#[cfg(test)] mod tests` blocks
+- Keep implementation simple (10-30 lines)
 
-  YES → Use manual test implementation
-   |
-   └─→ See "Guidelines for Manual Test Implementations"
-
-  NO → Use mockall's #[automock]
-   |
-   └─→ See "When to Use Mockall"
-```
+**NO** → Use mockall's `#[automock]`
+- Add `#[cfg_attr(test, automock)]` to trait
+- Use `Mock*` types in tests
 
 ## References
 
-- Real-world examples: See `src/transport/tests.rs` for manual implementations
+- Working examples: Look for `#[cfg(test)] mod tests` blocks in source modules
 - Mockall documentation: https://github.com/asomers/mockall
 - Mockall limitations: https://github.com/asomers/mockall/blob/master/mockall/examples/limitations.md

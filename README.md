@@ -33,68 +33,26 @@ Rust library providing Wingfoil Aeron transport adapters with zero-cost abstract
 ### For Development
 
 - **Rust**: Edition 2021
-- **C++ Toolchain** (for Rusteron):
-  - Xcode Command Line Tools: `xcode-select --install`
-  - CMake: `brew install cmake`
+- **C++ Toolchain** (for Rusteron): See [integration-test.md](openspec/integration-test.md)
 
-### For Running
+### For Running Integration Tests
 
-- **Aeron Media Driver**: Must be running for Rusteron adapter to function
-  - See [integration-test.md](openspec/integration-test.md) for setup instructions
+- **Aeron Media Driver**: See [integration-test.md](openspec/integration-test.md) for installation
+
+The build script checks for aeronmd and provides warnings if not found.
 
 ## Quick Start
 
-### Using Traits Only (No Aeron Required)
-
-```rust
-use aerofoil::transport::{AeronPublisher, TransportError};
-
-// Implement the trait for testing
-struct TestPublisher {
-    messages: Vec<Vec<u8>>,
-}
-
-impl AeronPublisher for TestPublisher {
-    fn offer(&mut self, buffer: &[u8]) -> Result<i64, TransportError> {
-        self.messages.push(buffer.to_vec());
-        Ok(self.messages.len() as i64 - 1)
-    }
-
-    fn try_claim<'a>(&'a mut self, _length: usize) -> Result<ClaimBuffer<'a>, TransportError> {
-        todo!("Implement as needed for tests")
-    }
-}
-```
-
-### Using Rusteron (Requires Media Driver)
-
-```rust
-use aerofoil::transport::AeronPublisher;
-use aerofoil::transport::rusteron::RusteronPublisher;
-use rusteron_client::AeronPublication;
-
-// Note: Requires media driver running and proper Rusteron setup
-// This is a skeleton - actual initialization requires more boilerplate
-
-fn example() -> Result<(), Box<dyn std::error::Error>> {
-    // Create Rusteron publication (details omitted)
-    // let publication = AeronPublication::new(...)?;
-
-    // Wrap in our publisher
-    // let mut publisher = RusteronPublisher::new(publication);
-
-    // Publish message
-    // let position = publisher.offer(b"Hello, Aeron!")?;
-
-    Ok(())
-}
-```
+See working examples in:
+- `examples/` directory - Runnable examples demonstrating usage
+- `#[cfg(test)] mod tests` blocks in source - Test patterns
+- API documentation: `cargo doc --open`
 
 ## Documentation
 
 - **[Project Conventions](openspec/project.md)** - Project standards and conventions
 - **[Mocking Guidelines](openspec/mocking.md)** - When to use mockall vs manual implementations
-- **[Integration Testing](openspec/integration-test.md)** - How to run integration tests with Aeron
+- **[Integration Testing](openspec/integration-test.md)** - Installing dependencies for integration tests
 
 ## Architecture
 
@@ -102,36 +60,32 @@ fn example() -> Result<(), Box<dyn std::error::Error>> {
 aerofoil/
 ├── src/
 │   ├── transport/
-│   │   ├── mod.rs           # Trait definitions
-│   │   ├── error.rs         # TransportError enum
-│   │   ├── buffer.rs        # ClaimBuffer, FragmentBuffer
-│   │   ├── tests.rs         # Manual test implementations
+│   │   ├── mod.rs           # Trait definitions (tests inline)
+│   │   ├── error.rs         # TransportError enum (tests inline)
+│   │   ├── buffer.rs        # ClaimBuffer, FragmentBuffer (tests inline)
 │   │   └── rusteron/        # Rusteron adapter (partial)
 │   │       ├── mod.rs
 │   │       ├── error.rs     # Error conversion
 │   │       ├── publisher.rs # RusteronPublisher
 │   │       └── subscriber.rs# RusteronSubscriber
 │   └── lib.rs
+├── tests/                   # Integration tests
+├── examples/                # Runnable examples
 ├── openspec/                # OpenSpec change proposals
 └── README.md
 ```
 
 ## Development
 
-### Build
+**Build**: `cargo build`
 
-```bash
-# With rusteron (default)
-cargo build
+**Test**: `cargo test`
 
-# Without any backend
-cargo build --no-default-features
+**With specific features**:
+- Rusteron (default): `cargo build --features rusteron`
+- No backend: `cargo build --no-default-features`
 
-# Run tests
-cargo test
-```
-
-### Next Steps
+## Next Steps
 
 See [openspec/changes/](openspec/changes/) for planned work:
 1. ✅ `add-transport-traits` - Complete

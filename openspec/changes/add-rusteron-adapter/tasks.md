@@ -54,15 +54,24 @@
 - [x] 8.4 Add documentation about C++ toolchain requirements (README.md, integration-test.md)
 - [x] 8.5 Document Rusteron usage patterns in module docs
 
+## 9. Build Infrastructure
+- [x] 9.1 Create `build.rs` to detect Aeron media driver at compile time
+- [x] 9.2 Check for `aeronmd` in PATH and common macOS locations
+- [x] 9.3 Set `AERON_MEDIA_DRIVER_PATH` environment variable when found
+- [x] 9.4 Provide helpful warnings if media driver not found
+- [x] 9.5 Create `MediaDriverGuard` test helper for RAII driver management
+- [x] 9.6 Document build-time detection in README
+
 ## Status Summary
 
-**Completed**: 33/38 tasks (87%)
+**Completed**: 39/44 tasks (89%)
 
 **Functional**:
 - ✅ `RusteronPublisher::offer()` - Working
 - ✅ `RusteronSubscriber::poll()` - Working
 - ✅ Error conversion - Complete
 - ✅ Documentation - Complete
+- ✅ Build infrastructure - Media driver detection and test helpers
 
 **Not Implemented**:
 - ⚠️ `RusteronPublisher::try_claim()` - TODO (requires AeronBufferClaim buffer access investigation)

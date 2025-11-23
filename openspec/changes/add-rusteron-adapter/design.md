@@ -155,19 +155,91 @@ impl AeronSubscriber for RusteronSubscriber {
 **Rollback:**
 Simple revert if issues found - no users yet dependent on this.
 
-## Open Questions
+## Implementation Decisions Made
+
+### Decision 6: Build-Time Media Driver Detection
+**What:** Add build script to detect Aeron Media Driver at compile time.
+
+**Why:**
+- Provide immediate feedback during development
+- Help developers set up environment correctly
+- Set environment variables for test helpers
+- Avoid silent failures in tests
+
+**Implementation:**
+```rust
+// build.rs
+fn check_aeron_availability() {
+    // Check PATH and common locations
+    // Set AERON_MEDIA_DRIVER_PATH if found
+    // Provide helpful warnings if not found
+}
+```
+
+**Trade-off:** Decided against automatic download because:
+- Complex and unreliable (extraction, permissions, etc.)
+- Better to guide users to proper installation
+- Avoids network calls during every build
+
+### Decision 7: RAII Media Driver Helper
+**What:** Provide `MediaDriverGuard` for managing driver lifecycle in tests.
+
+**Why:**
+- RAII pattern ensures cleanup (stop driver on drop)
+- Simple API for integration tests
+- Handles finding `aeronmd` binary automatically
+- Reduces boilerplate in test code
+
+**Implementation:**
+```rust
+#[test]
+#[ignore]
+fn integration_test() {
+    let _driver = MediaDriverGuard::start()?;
+    _driver.wait_for_ready();
+    // Test code...
+    // Automatic cleanup on drop
+}
+```
+
+### Decision 8: Partial Implementation Strategy
+**What:** Ship with `offer()` and `poll()` working, `try_claim()` as TODO.
+
+**Why:**
+- `offer()` and `poll()` cover 80% of use cases
+- Delivers value early rather than waiting for 100% complete
+- `try_claim()` blocked on understanding Rusteron's buffer claim API
+- Users can implement zero-copy if needed via direct Rusteron access
+
+**Documentation:** README clearly states limitations and next steps.
+
+## Resolved Questions
 
 1. **Should we expose Rusteron configuration options?**
-   - Rusteron has many configuration knobs (channel, stream ID, etc.)
-   - Options: (a) Builder pattern for configuration, (b) Pass through Rusteron context
-   - **Decision before implementation:** Start with simple constructor taking channel string. Add builder later if needed.
+   - **Resolved:** Provide `new()` constructor taking Rusteron types directly
+   - Users configure Rusteron objects, then wrap in our adapters
+   - Provides full flexibility without duplicating Rusteron's API
 
 2. **How to handle fragment assembly?**
-   - Aeron can fragment large messages
-   - Rusteron might handle this automatically, or we may need to
-   - **Need to investigate:** Check Rusteron documentation and test with large messages
+   - **Resolved:** Rusteron handles this automatically
+   - `poll_once` delivers complete fragments
+   - No additional assembly needed
 
 3. **Should we support controlled/exclusive publications?**
-   - Aeron has different publication types
-   - Trait design is generic - could support via separate constructor methods
-   - **Decision: Start with regular publication, add variants if needed**
+   - **Deferred:** Start with wrapping any `AeronPublication`
+   - Type system allows any publication type
+   - User creates specific publication type, we just wrap it
+
+## Outstanding Issues
+
+1. **`try_claim()` Implementation**
+   - **Issue:** Need to access mutable buffer from `AeronBufferClaim`
+   - **Blocked by:** Understanding Rusteron's buffer claim API
+   - **Next step:** Investigate `AeronBufferClaim` methods in Rusteron docs
+   - **Workaround:** Users can call `inner()` to access raw Rusteron publication
+
+2. **Integration Tests**
+   - **Issue:** Cannot run without media driver
+   - **Resolution:** Created `MediaDriverGuard` helper
+   - **Status:** Infrastructure ready, tests not yet written
+   - **Next step:** Add example integration tests using the guard

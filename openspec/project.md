@@ -23,7 +23,9 @@ Rust library providing wingfoil aeron adapters
 - Document cases of clone and copy with explanations
 - Document design decisions using unit test cases
 - Suggests improvements to the openspec meta prmopts after learning lessons from implementation
-
+- No code in documents, simply add working code files and reference them from documentation
+- Use idiomatic rust cargo examples instead of examples in modules
+- Keep documentation for rusteron separate from aeron_rs documentation in their own modules
 ### Lessons learned
 - Document lessons learned in @openspec/lessons-learned/ consider these lessos in future designs
 
@@ -36,19 +38,38 @@ Rust library providing wingfoil aeron adapters
 - Aeron for all signals including logging and monitoring in production, with fallback to stdout/stderr in development
 - Separate a module for a higher level SBE message abstraction over raw byte buffers
 
-### Testing Strategy
+### Unit Testing Strategy
+- Write tests inline using `#[cfg(test)] mod tests` at the bottom of each module
+- NEVER create separate `tests.rs` files - use idiomatic inline test modules
 - Use mockall for mocking in unit tests
 - Prefer mockall's `#[automock]` for generating mocks from traits
-- For traits where mockall has limitations (complex lifetimes, generic closures), provide manual test implementations
+- For traits where mockall has limitations (complex lifetimes, generic closures), provide manual test implementations inline
 - Only expose mock objects in test configurations
 - Validate examples in comments with doc tests
-- Add unit tests in line with implementation
 - Use the given when then style for unit tests
-
 **For detailed mocking guidelines, see [mocking.md](mocking.md)**
 
-**For integration testing with external dependencies, see [integration-test.md](integration-test.md)**
+### Integration Testing Strategy
+- **NEVER write ignored tests** - Ignored tests prove nothing and rot over time
 - Support Linux production and MacOS development environments
+- Integration tests requiring external dependencies must be:
+  - Self-contained (start/stop dependencies automatically)
+  - Use feature flags to conditionally compile (not `#[ignore]`)
+  - Fail fast with clear error messages if dependencies unavailable
+- Use RAII guards for automatic resource cleanup (MediaDriverGuard pattern)
+- Integration tests should be runnable via `cargo test` without manual setup
+- Write integration tests in `tests/` directory at project root (standard Cargo convention)
+- Use Given/When/Then structure for integration test clarity
+- Ignore the java aeron media driver
+- There is no homebrew tap for aeron/aeronmd
+**For setting up the integration test environment (installing aeronmd, C++ toolchain), see [integration-test.md](integration-test.md)**
+
+### Examples Strategy
+- Use idiomatic Rust cargo examples in `examples/` directory at project root
+- NEVER put example code in modules - use `examples/*.rs` files
+- Examples should demonstrate real-world usage patterns
+- Each example should be runnable via `cargo run --example <name>`
+- Keep examples focused on single use cases
 
 ### Benchmarking Strategy
 - Use criterion for benchmarking key code paths
@@ -77,27 +98,5 @@ Rust library providing wingfoil aeron adapters
 
 ### C++ Toolchain (Rusteron only)
 - **Purpose**: Required to compile rusteron crate and its C++ Aeron bindings
-- **Components**:
-  - C++17 compatible compiler (Clang from Xcode)
-  - CMake (for building Aeron C++ libraries)
-  - Standard C++ build tools
-- **macOS Installation**:
-  ```bash
-  # Install Xcode Command Line Tools
-  xcode-select --install
-
-  # Install CMake via Homebrew
-  brew install cmake
-
-  # Verify installation
-  clang++ --version
-  cmake --version
-  ```
-- **Not required**: When using `aeron-rs` feature (pure Rust)
-- **Documentation**: See rusteron installation guide
-
-### Java Runtime (Optional)
-- **Purpose**: Aeron Media Driver can be run as Java application
-- **Requirement**: JDK 8 or later
-- **Alternative**: Use embedded media driver or C++ media driver
-- **Documentation**: https://github.com/real-logic/aeron
+- **Components**: C++17 compatible compiler, CMake, standard build tools
+- **Installation**: See [integration-test.md](integration-test.md) for platform-specific setup
