@@ -10,12 +10,15 @@ Rust library providing wingfoil aeron adapters
 - Rusteron aeron client wrapper https://github.com/gsrxyz/rusteron
 - Pure rust aeron client https://github.com/UnitedTraders/aeron-rs
 - Mock object test library https://github.com/asomers/mockall
+- Benchmarking https://docs.rs/criterion/latest/criterion/
 
 ## Project Conventions
 - Wingfoil for message processing
 - Aeron for input and output
 - Zero copy message handling where possible
 - Configuration object model the abstracts the configuration source
+- Support both rusteron and aeron-rs clients with feature flags
+- Use static dispatch in hot paths, ban dynamic traits in hot paths
 
 ### Code Style
 - Idiomatic Rust patterns
@@ -23,10 +26,14 @@ Rust library providing wingfoil aeron adapters
 
 ### Architecture Patterns
 - Support processor pinning to specific CPU cores for performance
-- Aeron for all signals including logging and monitoring
+- Aeron for all signals including logging and monitoring in production, with fallback to stdout/stderr in development
 
 ### Testing Strategy
 - Unit tests with mockall for mocking
+
+### Benchmarking Strategy
+- Use criterion for benchmarking key code paths
+- Combine examples into benchmarks where possible
 
 ### Git Workflow
 - Task branches off main
