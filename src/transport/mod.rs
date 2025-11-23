@@ -98,6 +98,9 @@ pub mod error;
 pub use buffer::{ClaimBuffer, FragmentBuffer, FragmentHeader};
 pub use error::TransportError;
 
+#[cfg(feature = "rusteron")]
+pub mod rusteron;
+
 #[cfg(test)]
 mod tests;
 

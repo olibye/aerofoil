@@ -30,13 +30,28 @@
 //! Backend selection is controlled via Cargo features (mutually exclusive):
 //!
 //! - `rusteron` (default) - Use Rusteron C++ wrapper (requires C++ toolchain)
-//! - `aeron-rs` - Use pure Rust aeron-rs client
+//! - `aeron-rs` - Use pure Rust aeron-rs client (not yet implemented)
 //!
-//! To use aeron-rs instead of the default:
+//! ## Using Rusteron (Default)
+//!
+//! The default feature uses Rusteron, which requires:
+//! - C++ toolchain (Clang, CMake)
+//! - Aeron Media Driver running
+//!
+//! See the project README for setup instructions.
 //!
 //! ```toml
 //! [dependencies]
-//! aerofoil = { version = "0.1", default-features = false, features = ["aeron-rs"] }
+//! aerofoil = "0.1"  # rusteron enabled by default
+//! ```
+//!
+//! ## Disabling Default Features
+//!
+//! To use without any backend (traits only):
+//!
+//! ```toml
+//! [dependencies]
+//! aerofoil = { version = "0.1", default-features = false }
 //! ```
 //!
 //! # Examples
