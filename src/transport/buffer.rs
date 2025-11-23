@@ -5,10 +5,31 @@ use std::ops::{Deref, DerefMut};
 /// This buffer provides mutable access to a region of the Aeron publication buffer.
 /// Messages can be written directly into this buffer, avoiding intermediate copies.
 ///
-/// # Lifetime
+/// # Design Decision: Lifetime-Bound Ownership
 ///
 /// The lifetime `'a` ensures the buffer cannot outlive the underlying transport
-/// resource, preventing use-after-free errors.
+/// resource, preventing use-after-free errors:
+///
+/// - **Compile-time safety**: Rust borrow checker prevents buffer escaping
+/// - **Zero runtime cost**: No reference counting or runtime checks needed
+/// - **Aeron semantics**: Matches Aeron's buffer lifecycle model
+/// - **Exclusive access**: `&mut` ensures no concurrent access to the same buffer
+///
+/// # Design Decision: Deref Implementation
+///
+/// `ClaimBuffer` implements `Deref<Target = [u8]>` for ergonomic access:
+///
+/// - **Familiar API**: Works like a slice (indexing, iteration, copy_from_slice)
+/// - **No wrapper overhead**: Direct access to underlying buffer
+/// - **Type safety**: Still a distinct type, not confused with regular slices
+///
+/// # Design Decision: Position Tracking
+///
+/// Each claim stores its stream position for correlation and debugging:
+///
+/// - **Message ordering**: Can verify sequential publication
+/// - **Troubleshooting**: Helps diagnose message loss or duplication
+/// - **Monitoring**: Enables position-based metrics
 ///
 /// # Safety
 ///
@@ -83,6 +104,32 @@ impl<'a> DerefMut for ClaimBuffer<'a> {
 /// the Aeron subscription. The data is accessed directly from the Aeron buffer
 /// without copying.
 ///
+/// # Design Decision: Read-Only Access
+///
+/// Unlike `ClaimBuffer`, this uses `&[u8]` (immutable) rather than `&mut [u8]`:
+///
+/// - **Aeron semantics**: Received data is immutable in Aeron
+/// - **Safety**: Prevents accidental modification of received messages
+/// - **Share-able**: Multiple readers could access (though not in current API)
+/// - **Clear intent**: Receiving is distinct from publishing
+///
+/// # Design Decision: Fragment Header Separation
+///
+/// Metadata is stored in a separate `FragmentHeader` struct:
+///
+/// - **Structured access**: Type-safe access to position, session, stream IDs
+/// - **Copyable**: Header can be copied without copying message data
+/// - **Extensible**: Can add fields without changing buffer structure
+/// - **Aeron alignment**: Matches Aeron's header + payload model
+///
+/// # Design Decision: AsRef Implementation
+///
+/// Implements both `Deref` and `AsRef<[u8]>`:
+///
+/// - **Generic APIs**: Works with functions expecting `AsRef<[u8]>`
+/// - **Slice operations**: Can use slice methods directly
+/// - **Type conversion**: Explicit conversion when needed
+///
 /// # Lifetime
 ///
 /// The lifetime `'a` ensures the buffer cannot outlive the underlying transport
@@ -103,6 +150,15 @@ pub struct FragmentBuffer<'a> {
 }
 
 /// Metadata about a received message fragment.
+///
+/// # Design Decision: Public Fields
+///
+/// Fields are public rather than using getter methods:
+///
+/// - **Zero-cost access**: No method call overhead
+/// - **Copyable type**: No risk of mutation
+/// - **Common pattern**: Standard in Rust for simple data structs
+/// - **Ergonomic**: Simpler to use (e.g., `header.position` vs `header.position()`)
 #[derive(Debug, Clone, Copy)]
 pub struct FragmentHeader {
     /// Position in the stream where this fragment starts

@@ -14,6 +14,56 @@
 //!   message handling where the underlying client supports it.
 //! - **Testable**: Mock implementations allow testing without Aeron infrastructure.
 //!
+//! # Key Design Decisions
+//!
+//! ## Decision 1: Separate Publisher and Subscriber Traits
+//!
+//! We define `AeronPublisher` and `AeronSubscriber` as separate traits rather than
+//! a single `Transport` trait. This provides:
+//!
+//! - **Focused APIs**: Most code uses either publishing or subscribing, not both
+//! - **Smaller surface area**: Easier to implement and mock
+//! - **Type-level enforcement**: A processor that only publishes can't accidentally subscribe
+//! - **Single responsibility**: Each trait has one clear purpose
+//!
+//! ## Decision 2: Unified Error Type
+//!
+//! All trait methods return `Result<T, TransportError>` for:
+//!
+//! - **Consistent error handling**: Same error type across all implementations
+//! - **Ergonomic code**: Can use `?` operator throughout
+//! - **Extensibility**: Error enum can be extended without breaking existing code
+//! - **Backend details preserved**: Via `source()` method for debugging
+//!
+//! ## Decision 3: Lifetime-Bound Buffer Types
+//!
+//! `ClaimBuffer<'a>` and `FragmentBuffer<'a>` borrow from the underlying transport:
+//!
+//! - **Safety**: Prevents use-after-free when accessing Aeron-managed buffers
+//! - **Zero-copy semantics**: Buffers are views, not owned data
+//! - **Compiler-enforced**: Rust lifetime checker ensures correctness
+//! - **Performance**: More efficient than copying or reference counting
+//!
+//! ## Decision 4: Manual Test Implementations
+//!
+//! Instead of using mockall's `#[automock]`, we design traits to be simple enough
+//! for users to implement manually in tests:
+//!
+//! - **Mockall limitations**: Cannot handle complex lifetimes (`try_claim<'a>`)
+//!   or generic closures (`poll<F>`)
+//! - **Simplicity**: Manual implementations are ~10 lines of straightforward code
+//! - **No dependencies**: Avoids mockall dependency and its limitations
+//! - **Flexibility**: Users implement exactly what they need for their tests
+//!
+//! ## Decision 5: Non-Blocking Contract
+//!
+//! All trait methods are documented to never block:
+//!
+//! - **HFT requirement**: Blocking is unacceptable in high-frequency trading
+//! - **Documented contract**: Clear expectation in trait rustdoc
+//! - **Back-pressure handling**: Explicit `BackPressure` error when buffers are full
+//! - **Safe for latency-sensitive code**: Callers can rely on immediate return
+//!
 //! # Architecture
 //!
 //! The transport layer consists of two main traits:

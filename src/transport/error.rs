@@ -3,6 +3,27 @@
 /// This enum provides a unified error type across all transport implementations
 /// (Rusteron, aeron-rs, mocks). Backend-specific errors are preserved via the
 /// `source()` method for debugging purposes.
+///
+/// # Design Decision: String-Based Error Details
+///
+/// Variant payloads use `String` rather than boxed errors to maintain:
+///
+/// - **Clone + Eq**: Required for testing and comparison
+/// - **No heap indirection**: Errors contain the message directly
+/// - **Simple propagation**: Can be cloned across thread boundaries
+///
+/// Trade-off: We lose the full error chain, but preserve the essential message.
+/// Backend-specific implementations can provide richer errors via `From` impls
+/// that preserve the original error in the string representation.
+///
+/// # Design Decision: Explicit BackPressure Variant
+///
+/// `BackPressure` is a first-class variant rather than a generic "WouldBlock":
+///
+/// - **Domain clarity**: Makes Aeron semantics explicit
+/// - **Not an error**: Back-pressure is expected in HFT systems
+/// - **Retry guidance**: Clearly signals "try again later"
+/// - **Monitoring**: Can be tracked separately from actual errors
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransportError {
     /// Back-pressure indication - the transport cannot accept more messages currently.
