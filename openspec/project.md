@@ -47,6 +47,9 @@ Rust library providing wingfoil aeron adapters
 
 **For detailed mocking guidelines, see [mocking.md](mocking.md)**
 
+**For integration testing with external dependencies, see [integration-test.md](integration-test.md)**
+- Support Linux production and MacOS development environments
+
 ### Benchmarking Strategy
 - Use criterion for benchmarking key code paths
 - Combine examples into benchmarks where possible
@@ -62,4 +65,39 @@ Rust library providing wingfoil aeron adapters
 - The input and output code paths must be non-blocking and low latency
 
 ## External Dependencies
-[Document key external services, APIs, or systems]
+
+### Aeron Media Driver
+- **Purpose**: Required for Rusteron and aeron-rs transport backends to function
+- **Installation**:
+  - Download from https://github.com/real-logic/aeron/releases
+  - Or install via package manager (varies by platform)
+- **Runtime requirement**: Media driver must be running before starting applications that use Aeron transports
+- **Development**: Required for integration tests
+- **Documentation**: https://github.com/real-logic/aeron/wiki
+
+### C++ Toolchain (Rusteron only)
+- **Purpose**: Required to compile rusteron crate and its C++ Aeron bindings
+- **Components**:
+  - C++17 compatible compiler (Clang from Xcode)
+  - CMake (for building Aeron C++ libraries)
+  - Standard C++ build tools
+- **macOS Installation**:
+  ```bash
+  # Install Xcode Command Line Tools
+  xcode-select --install
+
+  # Install CMake via Homebrew
+  brew install cmake
+
+  # Verify installation
+  clang++ --version
+  cmake --version
+  ```
+- **Not required**: When using `aeron-rs` feature (pure Rust)
+- **Documentation**: See rusteron installation guide
+
+### Java Runtime (Optional)
+- **Purpose**: Aeron Media Driver can be run as Java application
+- **Requirement**: JDK 8 or later
+- **Alternative**: Use embedded media driver or C++ media driver
+- **Documentation**: https://github.com/real-logic/aeron
