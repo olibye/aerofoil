@@ -82,3 +82,33 @@ The library SHALL ensure all transport operations remain non-blocking to meet lo
 #### Scenario: Subscription polling
 - **WHEN** polling for messages
 - **THEN** the operation SHALL return immediately whether messages are available or not
+
+### Requirement: Mock Implementation Support
+The library SHALL provide mock implementations of the transport traits to enable testing without requiring an Aeron media driver or real transport backends.
+
+#### Scenario: Mock publisher for testing
+- **WHEN** tests use a mock publisher implementation
+- **THEN** publication operations can be verified without requiring Rusteron or aeron-rs dependencies
+
+#### Scenario: Mock subscriber for testing
+- **WHEN** tests use a mock subscriber implementation
+- **THEN** subscription operations can be verified and controlled message delivery can be simulated
+
+#### Scenario: Mockall integration
+- **WHEN** using the mockall testing library
+- **THEN** trait methods can be mocked with expectations and custom behavior
+
+### Requirement: Performance Benchmarking
+The library SHALL provide benchmarks comparing the performance characteristics of Rusteron and aeron-rs adapter implementations.
+
+#### Scenario: Publication latency benchmark
+- **WHEN** benchmarks are run for both backends
+- **THEN** publication latency (time from offer to confirmation) is measured and compared
+
+#### Scenario: Subscription throughput benchmark
+- **WHEN** benchmarks are run for both backends
+- **THEN** message reception throughput (messages per second) is measured and compared
+
+#### Scenario: Zero-copy verification
+- **WHEN** benchmarks measure memory allocations
+- **THEN** zero-copy paths can be verified to have no heap allocations in the critical path

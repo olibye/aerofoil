@@ -25,6 +25,8 @@ Different deployment scenarios favor different backends. High-frequency trading 
 - Maintain zero-copy patterns where underlying clients support them
 - Unified error handling across backends
 - Simple feature flag selection
+- Enable testing without Aeron media driver via mock implementations
+- Provide performance benchmarks comparing both backend implementations
 
 **Non-Goals:**
 - Runtime backend switching (adds overhead, violates zero-cost principle)
@@ -96,6 +98,34 @@ pub struct PublicationClaim<'a> {
 - Application code can handle errors uniformly
 - `std::error::Error::source()` preserves backend-specific debugging info
 - Idiomatic Rust error handling with `Result<T, TransportError>`
+
+### Decision 6: Mock implementations for testing
+**What:** Provide concrete mock structs implementing `AeronPublisher` and `AeronSubscriber` traits, with mockall support.
+
+**Why:**
+- Enables unit testing without requiring Aeron media driver infrastructure
+- Reduces test setup complexity and execution time
+- Allows testing edge cases and error conditions easily
+- Mockall integration provides ergonomic expectations API
+
+**Implementation approach:**
+- Simple in-memory mock structs with configurable behavior
+- Optional mockall automock derive on traits for advanced mocking
+- Separate `mock` module (may be feature-gated for test-only)
+
+### Decision 7: Criterion-based benchmarking suite
+**What:** Use criterion.rs to benchmark both backends, measuring latency, throughput, and allocations.
+
+**Why:**
+- Provides statistical rigor (outlier detection, confidence intervals)
+- Enables regression detection in CI
+- Allows objective comparison between Rusteron and aeron-rs
+- Verifies zero-copy claims empirically
+
+**Metrics:**
+- Publication latency (p50, p99, p999)
+- Subscription throughput (messages/sec)
+- Allocation count in hot path (should be zero)
 
 ## Risks / Trade-offs
 

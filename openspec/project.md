@@ -19,6 +19,8 @@ Rust library providing wingfoil aeron adapters
 - Configuration object model the abstracts the configuration source
 - Support both rusteron and aeron-rs clients with feature flags
 - Use static dispatch in hot paths, ban dynamic traits in hot paths
+- Document latency compromises between rusteron and aeron-rs
+- Document cases of clone and copy with explanations
 
 ### Code Style
 - Idiomatic Rust patterns
