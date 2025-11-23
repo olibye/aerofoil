@@ -21,7 +21,6 @@ Rust library providing wingfoil aeron adapters
 - Use static dispatch in hot paths, ban dynamic traits in hot paths
 - Document latency compromises between rusteron and aeron-rs
 - Document cases of clone and copy with explanations
-- Only expose mock objects in test configurations
 
 ### Code Style
 - Idiomatic Rust patterns
@@ -30,9 +29,12 @@ Rust library providing wingfoil aeron adapters
 ### Architecture Patterns
 - Support processor pinning to specific CPU cores for performance
 - Aeron for all signals including logging and monitoring in production, with fallback to stdout/stderr in development
+- Separate a module for a higher level SBE message abstraction over raw byte buffers
 
 ### Testing Strategy
 - Unit tests with mockall for mocking
+- Only expose mock objects in test configurations
+- Validate examples in comments with doc tests
 
 ### Benchmarking Strategy
 - Use criterion for benchmarking key code paths

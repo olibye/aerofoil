@@ -18,7 +18,7 @@ This is the foundational change for the Aerofoil transport abstraction layer. We
 **Goals:**
 - Define clean, minimal trait API for publication and subscription
 - Enable static dispatch (monomorphization, no vtables)
-- Provide mock implementations for testing
+- Keep traits simple enough for manual test implementations
 - Support zero-copy via lifetime-bound buffer types
 - Unified error handling across implementations
 
@@ -74,29 +74,34 @@ pub struct ClaimBuffer<'a> {
 }
 ```
 
-### Decision 4: In-memory mock with inspection APIs
-**What:** Provide `MockPublisher` and `MockSubscriber` structs with methods to inspect/inject messages.
+### Decision 4: Manual test implementations instead of mockall
+**What:** Design traits to be simple enough that users can implement them manually for testing.
 
 **Why:**
-- Simplest possible testing implementation
-- No external dependencies (not even mockall for basic mocks)
-- Deterministic behavior for testing
-- Can verify messages were published, inject controlled messages
+- Mockall has limitations with complex lifetimes (`try_claim`) and generic closures (`poll`)
+- Manual test implementations are straightforward for these simple traits
+- No additional dependencies needed
+- More flexible - users implement exactly what they need for their tests
 
-**API:**
+**Implementation:**
+Tests implement traits with minimal logic:
 ```rust
-impl MockPublisher {
-    pub fn new() -> Self;
-    pub fn published_messages(&self) -> &[Vec<u8>];
+struct TestPublisher {
+    messages: Vec<Vec<u8>>,
 }
 
-impl MockSubscriber {
-    pub fn new() -> Self;
-    pub fn inject_message(&mut self, data: Vec<u8>);
+impl AeronPublisher for TestPublisher {
+    fn offer(&mut self, buffer: &[u8]) -> Result<i64, TransportError> {
+        self.messages.push(buffer.to_vec());
+        Ok(0)
+    }
+    // ... try_claim implementation
 }
 ```
 
-**Plus mockall integration:** Also add `#[automock]` for advanced mocking scenarios.
+**Alternatives considered:**
+- **Mockall automock:** Doesn't support complex lifetimes and closures - rejected
+- **Pre-built mock types:** Adds maintenance burden and limits flexibility - rejected
 
 ### Decision 5: Non-blocking semantics enforced by trait contract
 **What:** Trait documentation specifies all methods must be non-blocking.
@@ -117,10 +122,10 @@ impl MockSubscriber {
 - **Impact:** May need trait extensions or breaking changes later
 - **Mitigation:** Start minimal (offer, poll, try_claim). Extensions can be added as separate traits or via associated types. Review both Rusteron and aeron-rs APIs before finalizing.
 
-**Trade-off:** Two mock strategies (in-memory + mockall)
-- **Benefit:** Flexibility for different testing scenarios
-- **Cost:** Two implementations to maintain
-- **Justification:** In-memory mocks are simple and deterministic. Mockall handles complex expectations. Both useful.
+**Trade-off:** Manual test implementations vs mockall
+- **Benefit:** No dependencies, full control, works with complex trait signatures
+- **Cost:** Users write test implementations manually (but they're simple)
+- **Justification:** Traits are minimal (2 methods each), mockall doesn't support lifetimes/closures well, manual implementations are ~10 lines
 
 **Risk:** Lifetime complexity in buffer types
 - **Impact:** Users might struggle with lifetime errors

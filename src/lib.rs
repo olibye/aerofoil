@@ -23,7 +23,7 @@
 //!
 //! - **Rusteron adapter** (feature `rusteron`) - Wraps the official C++ Aeron client
 //! - **Aeron-rs adapter** (feature `aeron-rs`) - Pure Rust Aeron implementation
-//! - **Mock implementations** - In-memory testing without Aeron
+//! - **Test implementations** - Simple trait implementations for testing (users implement as needed)
 //!
 //! # Feature Flags
 //!
@@ -44,9 +44,10 @@
 //! ## Publishing Messages
 //!
 //! ```ignore
-//! use aerofoil::transport::{AeronPublisher, MockPublisher};
+//! use aerofoil::transport::AeronPublisher;
 //!
-//! let mut publisher = MockPublisher::new();
+//! // With a real implementation (Rusteron or aeron-rs)
+//! let mut publisher = create_publisher(); // Implementation-specific
 //!
 //! // Simple publish (copies data)
 //! let position = publisher.offer(b"hello world")?;
@@ -60,10 +61,10 @@
 //! ## Receiving Messages
 //!
 //! ```ignore
-//! use aerofoil::transport::{AeronSubscriber, MockSubscriber};
+//! use aerofoil::transport::AeronSubscriber;
 //!
-//! let mut subscriber = MockSubscriber::new();
-//! subscriber.inject_message(b"test message".to_vec());
+//! // With a real implementation (Rusteron or aeron-rs)
+//! let mut subscriber = create_subscriber(); // Implementation-specific
 //!
 //! subscriber.poll(|fragment| {
 //!     println!("Received: {:?}", fragment.as_ref());
@@ -87,39 +88,39 @@
 //!
 //! # Testing
 //!
-//! Use [`MockPublisher`] and
-//! [`MockSubscriber`] for unit tests:
+//! For unit testing without Aeron, implement the traits with simple test doubles:
 //!
-//! ```
-//! use aerofoil::transport::{MockPublisher, AeronPublisher};
+//! ```ignore
+//! use aerofoil::transport::{AeronPublisher, TransportError};
+//!
+//! struct TestPublisher {
+//!     messages: Vec<Vec<u8>>,
+//! }
+//!
+//! impl AeronPublisher for TestPublisher {
+//!     fn offer(&mut self, buffer: &[u8]) -> Result<i64, TransportError> {
+//!         self.messages.push(buffer.to_vec());
+//!         Ok(self.messages.len() as i64 - 1)
+//!     }
+//!
+//!     fn try_claim<'a>(&'a mut self, length: usize) -> Result<ClaimBuffer<'a>, TransportError> {
+//!         // Implementation details...
+//!         unimplemented!()
+//!     }
+//! }
 //!
 //! #[test]
-//! fn test_publishing() {
-//!     let mut publisher = MockPublisher::new();
-//!     publisher.offer(b"test").unwrap();
-//!
-//!     let messages = publisher.published_messages();
-//!     assert_eq!(messages.len(), 1);
-//!     assert_eq!(messages[0], b"test");
+//! fn test_my_code() {
+//!     let mut publisher = TestPublisher { messages: Vec::new() };
+//!     my_function_that_publishes(&mut publisher).unwrap();
+//!     assert_eq!(publisher.messages.len(), 1);
 //! }
 //! ```
 //!
-//! For advanced mocking with expectations, use mockall:
-//!
-//! ```ignore
-//! use aerofoil::transport::MockAeronPublisher;
-//! use mockall::predicate::*;
-//!
-//! let mut mock = MockAeronPublisher::new();
-//! mock.expect_offer()
-//!     .with(eq(b"expected message"))
-//!     .times(1)
-//!     .returning(|_| Ok(0));
-//! ```
+//! The traits are designed to be easy to implement for testing purposes.
 
 pub mod transport;
 
 pub use transport::{
-    AeronPublisher, AeronSubscriber, ClaimBuffer, FragmentBuffer, FragmentHeader, MockPublisher,
-    MockSubscriber, TransportError,
+    AeronPublisher, AeronSubscriber, ClaimBuffer, FragmentBuffer, FragmentHeader, TransportError,
 };

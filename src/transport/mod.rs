@@ -44,14 +44,12 @@
 
 pub mod buffer;
 pub mod error;
-pub mod mock;
-
-#[cfg(test)]
-mod tests;
 
 pub use buffer::{ClaimBuffer, FragmentBuffer, FragmentHeader};
 pub use error::TransportError;
-pub use mock::{MockPublisher, MockSubscriber};
+
+#[cfg(test)]
+mod tests;
 
 /// Publishes messages to an Aeron channel.
 ///

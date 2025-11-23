@@ -1,152 +1,153 @@
-///! Integration tests demonstrating generic code using transport traits.
+//! Tests demonstrating trait usage without external Aeron dependencies.
+//!
+//! Note: mockall's automock has limitations with complex lifetimes and closures,
+//! so these tests demonstrate manual test implementations.
 
 #[cfg(test)]
-mod integration_tests {
-    use crate::transport::{AeronPublisher, AeronSubscriber, MockPublisher, MockSubscriber, TransportError};
+mod trait_tests {
+    use crate::transport::{AeronPublisher, AeronSubscriber, ClaimBuffer, FragmentBuffer, FragmentHeader, TransportError};
+    use std::collections::VecDeque;
 
-    // Generic function that works with any publisher
-    fn send_heartbeat<P: AeronPublisher>(publisher: &mut P) -> Result<i64, TransportError> {
-        publisher.offer(b"HEARTBEAT")
+    /// Simple test publisher for demonstration
+    struct TestPublisher {
+        messages: Vec<Vec<u8>>,
+        next_position: i64,
     }
 
-    // Generic function that counts messages
-    fn count_messages<S: AeronSubscriber>(subscriber: &mut S) -> Result<usize, TransportError> {
-        let mut count = 0;
-        subscriber.poll(|_fragment| {
-            count += 1;
-            Ok(())
-        })?;
-        Ok(count)
-    }
-
-    // Generic function using zero-copy publication
-    fn send_with_claim<P: AeronPublisher>(publisher: &mut P, data: &[u8]) -> Result<(), TransportError> {
-        let mut claim = publisher.try_claim(data.len())?;
-        claim[0..data.len()].copy_from_slice(data);
-        Ok(())
-    }
-
-    #[test]
-    fn test_generic_heartbeat() {
-        let mut publisher = MockPublisher::new();
-        let position = send_heartbeat(&mut publisher).unwrap();
-        assert_eq!(position, 0);
-
-        let messages = publisher.published_messages();
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0], b"HEARTBEAT");
-    }
-
-    #[test]
-    fn test_generic_count_messages() {
-        let mut subscriber = MockSubscriber::new();
-        subscriber.inject_message(b"msg1".to_vec());
-        subscriber.inject_message(b"msg2".to_vec());
-        subscriber.inject_message(b"msg3".to_vec());
-
-        let count = count_messages(&mut subscriber).unwrap();
-        assert_eq!(count, 3);
-    }
-
-    #[test]
-    fn test_generic_zero_copy() {
-        let mut publisher = MockPublisher::new();
-        send_with_claim(&mut publisher, b"zero-copy test").unwrap();
-
-        let messages = publisher.published_messages();
-        assert_eq!(messages.len(), 1);
-        assert_eq!(&messages[0][0..14], b"zero-copy test");
-    }
-
-    #[test]
-    fn test_publisher_subscriber_roundtrip() {
-        // This demonstrates a common pattern: publish to one transport,
-        // receive from another (in tests, both are mocks)
-        let mut publisher = MockPublisher::new();
-        let mut subscriber = MockSubscriber::new();
-
-        // Publish some messages
-        publisher.offer(b"message 1").unwrap();
-        publisher.offer(b"message 2").unwrap();
-        publisher.offer(b"message 3").unwrap();
-
-        // Transfer to subscriber (in real system, Aeron handles this)
-        for msg in publisher.published_messages() {
-            subscriber.inject_message(msg.clone());
+    impl TestPublisher {
+        fn new() -> Self {
+            Self {
+                messages: Vec::new(),
+                next_position: 0,
+            }
         }
 
-        // Verify we can receive them
-        let mut received = Vec::new();
-        subscriber
-            .poll(|fragment| {
-                received.push(fragment.as_ref().to_vec());
-                Ok(())
-            })
-            .unwrap();
+        fn messages(&self) -> &[Vec<u8>] {
+            &self.messages
+        }
+    }
 
-        assert_eq!(received.len(), 3);
-        assert_eq!(received[0], b"message 1");
-        assert_eq!(received[1], b"message 2");
-        assert_eq!(received[2], b"message 3");
+    impl AeronPublisher for TestPublisher {
+        fn offer(&mut self, buffer: &[u8]) -> Result<i64, TransportError> {
+            let pos = self.next_position;
+            self.next_position += buffer.len() as i64;
+            self.messages.push(buffer.to_vec());
+            Ok(pos)
+        }
+
+        fn try_claim<'a>(&'a mut self, length: usize) -> Result<ClaimBuffer<'a>, TransportError> {
+            let pos = self.next_position;
+            self.next_position += length as i64;
+            self.messages.push(vec![0u8; length]);
+            let buf = self.messages.last_mut().unwrap();
+            Ok(ClaimBuffer::new(buf, pos))
+        }
+    }
+
+    /// Simple test subscriber for demonstration
+    struct TestSubscriber {
+        messages: VecDeque<Vec<u8>>,
+        next_position: i64,
+    }
+
+    impl TestSubscriber {
+        fn new() -> Self {
+            Self {
+                messages: VecDeque::new(),
+                next_position: 0,
+            }
+        }
+
+        fn inject(&mut self, data: Vec<u8>) {
+            self.messages.push_back(data);
+        }
+    }
+
+    impl AeronSubscriber for TestSubscriber {
+        fn poll<F>(&mut self, mut handler: F) -> Result<usize, TransportError>
+        where
+            F: FnMut(&FragmentBuffer) -> Result<(), TransportError>,
+        {
+            let mut count = 0;
+            while let Some(msg) = self.messages.pop_front() {
+                let pos = self.next_position;
+                self.next_position += msg.len() as i64;
+
+                let header = FragmentHeader {
+                    position: pos,
+                    session_id: 1,
+                    stream_id: 1,
+                };
+                let fragment = FragmentBuffer::new(&msg, header);
+                handler(&fragment)?;
+                count += 1;
+            }
+            Ok(count)
+        }
+    }
+
+    #[test]
+    fn test_publisher_offer() {
+        let mut publisher = TestPublisher::new();
+        let pos = publisher.offer(b"hello").unwrap();
+        assert_eq!(pos, 0);
+        assert_eq!(publisher.messages()[0], b"hello");
+    }
+
+    #[test]
+    fn test_publisher_try_claim() {
+        let mut publisher = TestPublisher::new();
+        let mut claim = publisher.try_claim(10).unwrap();
+        claim[0..4].copy_from_slice(b"test");
+        drop(claim);
+        assert_eq!(&publisher.messages()[0][0..4], b"test");
+    }
+
+    #[test]
+    fn test_subscriber_poll() {
+        let mut subscriber = TestSubscriber::new();
+        subscriber.inject(b"msg1".to_vec());
+        subscriber.inject(b"msg2".to_vec());
+
+        let mut received = Vec::new();
+        let count = subscriber.poll(|frag| {
+            received.push(frag.as_ref().to_vec());
+            Ok(())
+        }).unwrap();
+
+        assert_eq!(count, 2);
+        assert_eq!(received[0], b"msg1");
+        assert_eq!(received[1], b"msg2");
+    }
+
+    #[test]
+    fn test_generic_function() {
+        fn send_heartbeat<P: AeronPublisher>(publisher: &mut P) -> Result<i64, TransportError> {
+            publisher.offer(b"HEARTBEAT")
+        }
+
+        let mut publisher = TestPublisher::new();
+        let pos = send_heartbeat(&mut publisher).unwrap();
+        assert_eq!(pos, 0);
+        assert_eq!(publisher.messages()[0], b"HEARTBEAT");
     }
 
     #[test]
     fn test_error_propagation() {
-        let mut subscriber = MockSubscriber::new();
-        subscriber.inject_message(b"msg1".to_vec());
-        subscriber.inject_message(b"msg2".to_vec());
+        struct ErrorPublisher;
 
-        // Handler that returns error on second message
-        let mut count = 0;
-        let result = subscriber.poll(|_fragment| {
-            count += 1;
-            if count == 2 {
-                Err(TransportError::IoError("simulated error".to_string()))
-            } else {
-                Ok(())
+        impl AeronPublisher for ErrorPublisher {
+            fn offer(&mut self, _buffer: &[u8]) -> Result<i64, TransportError> {
+                Err(TransportError::BackPressure)
             }
-        });
 
-        assert!(result.is_err());
-        match result {
-            Err(TransportError::IoError(msg)) => assert_eq!(msg, "simulated error"),
-            _ => panic!("Expected IoError"),
+            fn try_claim<'a>(&'a mut self, _length: usize) -> Result<ClaimBuffer<'a>, TransportError> {
+                Err(TransportError::NotConnected)
+            }
         }
-    }
 
-    #[test]
-    fn test_back_pressure_handling() {
-        let mut publisher = MockPublisher::new();
-        publisher.simulate_back_pressure_once();
-
-        // First offer should fail with back-pressure
-        let result = publisher.offer(b"test");
-        assert!(matches!(result, Err(TransportError::BackPressure)));
-
-        // Second offer should succeed
-        let result = publisher.offer(b"test");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_buffer_metadata_access() {
-        let mut subscriber = MockSubscriber::new();
-        subscriber.set_session_id(42);
-        subscriber.set_stream_id(100);
-        subscriber.inject_message(b"test message".to_vec());
-
-        subscriber
-            .poll(|fragment| {
-                // Access fragment metadata
-                assert_eq!(fragment.len(), 12);
-                assert_eq!(fragment.position(), 0);
-                assert_eq!(fragment.header().session_id, 42);
-                assert_eq!(fragment.header().stream_id, 100);
-
-                // Access data
-                assert_eq!(fragment.as_ref(), b"test message");
-                Ok(())
-            })
-            .unwrap();
+        let mut publisher = ErrorPublisher;
+        assert!(matches!(publisher.offer(b"test"), Err(TransportError::BackPressure)));
+        assert!(matches!(publisher.try_claim(10), Err(TransportError::NotConnected)));
     }
 }

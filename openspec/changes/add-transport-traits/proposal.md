@@ -8,13 +8,12 @@ Establish the foundational trait-based abstraction for Aeron transport operation
 - Define `AeronPublisher` and `AeronSubscriber` traits with core transport operations
 - Create `TransportError` enum for unified error handling
 - Define buffer abstraction types for zero-copy access
-- Provide mock implementations of traits for testing without Aeron
-- Add mockall support for advanced test scenarios
+- Design traits to be easily implementable for testing (no Aeron required)
 - Document the trait API and usage patterns
 
 ## Impact
 - Affected specs: `transport-traits` (new capability)
 - Affected code: Creates `src/transport/` module structure
-- Dependencies: Adds `mockall` as dev-dependency only
+- Dependencies: No new dependencies (mockall removed - traits are simple enough to implement manually for tests)
 - Foundation for: Later changes will implement these traits for Rusteron and aeron-rs
 - User value: Enables testing transport-dependent code without Aeron infrastructure

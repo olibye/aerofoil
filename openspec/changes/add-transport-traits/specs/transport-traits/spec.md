@@ -65,21 +65,17 @@ The library SHALL define buffer abstraction types with lifetime bounds that enab
 - **WHEN** receiving a message fragment
 - **THEN** a read-only buffer reference is provided without copying message data
 
-### Requirement: Mock Implementation Support
-The library SHALL provide mock implementations of the transport traits to enable testing without requiring an Aeron media driver or real transport backends.
+### Requirement: Test Implementation Support
+The library SHALL design traits to be easily implementable for testing purposes without requiring an Aeron media driver.
 
-#### Scenario: Mock publisher for testing
-- **WHEN** tests use a mock publisher implementation
-- **THEN** publication operations can be verified without requiring Aeron dependencies
+#### Scenario: Simple test implementations
+- **WHEN** implementing transport traits for testing
+- **THEN** tests can create minimal implementations without Aeron dependencies
 
-#### Scenario: Mock subscriber for testing
-- **WHEN** tests use a mock subscriber implementation
-- **THEN** subscription operations can be verified and controlled message delivery can be simulated
+#### Scenario: Trait-based testing
+- **WHEN** writing tests using generic trait bounds
+- **THEN** test doubles can be substituted for real implementations
 
-#### Scenario: Mockall integration
-- **WHEN** using the mockall testing library
-- **THEN** trait methods can be mocked with expectations and custom behavior
-
-#### Scenario: In-memory mock behavior
-- **WHEN** using the provided in-memory mock implementation
-- **THEN** published messages can be inspected and injected messages can be consumed
+#### Scenario: Error simulation
+- **WHEN** test implementations return specific errors
+- **THEN** error handling code paths can be tested
