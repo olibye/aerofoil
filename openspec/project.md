@@ -22,6 +22,10 @@ Rust library providing wingfoil aeron adapters
 - Document latency compromises between rusteron and aeron-rs
 - Document cases of clone and copy with explanations
 - Document design decisions using unit test cases
+- Suggests improvements to the openspec meta prmopts after learning lessons from implementation
+
+### Lessons learned
+- Document lessons learned in @openspec/lessons-learned/ consider these lessos in future designs
 
 ### Code Style
 - Idiomatic Rust patterns
@@ -40,6 +44,8 @@ Rust library providing wingfoil aeron adapters
 - Validate examples in comments with doc tests
 - Add unit tests in line with implementation
 - Use the given when then style for unit tests
+
+**For detailed mocking guidelines, see [mocking.md](mocking.md)**
 
 ### Benchmarking Strategy
 - Use criterion for benchmarking key code paths
