@@ -1,31 +1,42 @@
 # Project Context
 
 ## Purpose
-[Describe your project's purpose and goals]
+Rust library providing wingfoil aeron adapters
 
 ## Tech Stack
-- [List your primary technologies]
-- [e.g., TypeScript, React, Node.js]
+- Rust
+- Wingfoil https://docs.rs/wingfoil/latest/wingfoil/
+- Aeron https://github.com/aeron-io/aeron
+- Rusteron aeron client wrapper https://github.com/gsrxyz/rusteron
+- Pure rust aeron client https://github.com/UnitedTraders/aeron-rs
+- Mock object test library https://github.com/asomers/mockall
 
 ## Project Conventions
+- Wingfoil for message processing
+- Aeron for input and output
+- Zero copy message handling where possible
+- Configuration object model the abstracts the configuration source
 
 ### Code Style
-[Describe your code style preferences, formatting rules, and naming conventions]
+- Idiomatic Rust patterns
+- Standard Rust formatting with `rustfmt`
 
 ### Architecture Patterns
-[Document your architectural decisions and patterns]
+- Support processor pinning to specific CPU cores for performance
+- Aeron for all signals including logging and monitoring
 
 ### Testing Strategy
-[Explain your testing approach and requirements]
+- Unit tests with mockall for mocking
 
 ### Git Workflow
-[Describe your branching strategy and commit conventions]
-
+- Task branches off main
+- 
 ## Domain Context
-[Add domain-specific knowledge that AI assistants need to understand]
+- High frequency trading systems
+- Stateful stream processing for position keeping
 
 ## Important Constraints
-[List any technical, business, or regulatory constraints]
+- The input and output code paths must be non-blocking and low latency
 
 ## External Dependencies
 [Document key external services, APIs, or systems]
