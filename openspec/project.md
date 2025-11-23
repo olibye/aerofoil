@@ -21,6 +21,7 @@ Rust library providing wingfoil aeron adapters
 - Use static dispatch in hot paths, ban dynamic traits in hot paths
 - Document latency compromises between rusteron and aeron-rs
 - Document cases of clone and copy with explanations
+- Only expose mock objects in test configurations
 
 ### Code Style
 - Idiomatic Rust patterns
