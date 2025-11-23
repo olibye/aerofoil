@@ -9,7 +9,7 @@ Rust library providing wingfoil aeron adapters
 - Aeron https://github.com/aeron-io/aeron
 - Rusteron aeron client wrapper https://github.com/gsrxyz/rusteron
 - Pure rust aeron client https://github.com/UnitedTraders/aeron-rs
-- Mock object test library https://github.com/asomers/mockall
+- Mockall for mocking in unit tests https://github.com/asomers/mockall
 - Benchmarking https://docs.rs/criterion/latest/criterion/
 
 ## Project Conventions
@@ -32,9 +32,12 @@ Rust library providing wingfoil aeron adapters
 - Separate a module for a higher level SBE message abstraction over raw byte buffers
 
 ### Testing Strategy
-- Unit tests with mockall for mocking
+- Use mockall for mocking in unit tests
+- Prefer mockall's `#[automock]` for generating mocks from traits
+- For traits where mockall has limitations (complex lifetimes, generic closures), provide manual test implementations
 - Only expose mock objects in test configurations
 - Validate examples in comments with doc tests
+- Add unit tests in line with implementation
 
 ### Benchmarking Strategy
 - Use criterion for benchmarking key code paths
