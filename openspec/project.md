@@ -26,6 +26,16 @@ Rust library providing wingfoil aeron adapters
 - No code in documents, simply add working code files and reference them from documentation
 - Use idiomatic rust cargo examples instead of examples in modules
 - Keep documentation for rusteron separate from aeron_rs documentation in their own modules
+
+### Wingfoil Node Conventions
+- Wingfoil nodes SHALL be single-threaded and execute within Wingfoil's graph execution context
+- Node state SHALL NOT use thread-safe primitives (Arc<Mutex<>>, Arc<RwLock<>>, etc.) for internal processing
+- Nodes communicate via Wingfoil streams and channels, not through shared memory
+- Thread-safe wrappers (Arc<Mutex<>>) are ONLY acceptable for:
+  - Test verification where external code needs to observe node state after graph execution
+  - Interfacing with external multi-threaded systems outside the graph
+- Production node implementations should expose state via Wingfoil's Stream trait, not Arc<Mutex<>>
+- Keep node implementations simple and fast - avoid synchronization overhead in hot paths
 ### Lessons learned
 - Document lessons learned in @openspec/lessons-learned/ consider these lessos in future designs
 

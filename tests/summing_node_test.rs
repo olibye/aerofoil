@@ -1,8 +1,17 @@
-//! Integration test demonstrating stateful stream processing with Rusteron.
+//! Integration test demonstrating stateful stream processing with Wingfoil and Aeron.
 //!
-//! This test creates a SummingNode that polls a Rusteron subscriber for i64 values
-//! and maintains a running sum. It demonstrates the core pattern for building
-//! stateful processors in HFT systems.
+//! This test creates a SummingNode that implements Wingfoil's MutableNode trait,
+//! polls a Rusteron subscriber for i64 values, and maintains a running sum.
+//! It demonstrates the complete pattern for building stateful Wingfoil nodes
+//! that process Aeron messages in HFT systems.
+//!
+//! # Key Patterns Demonstrated
+//!
+//! - **Wingfoil Node**: Implementing `MutableNode` trait for graph-based execution
+//! - **Aeron Transport**: Using RusteronSubscriber for zero-copy message receipt
+//! - **Shared State**: Using Arc<Mutex<>> to access node state after graph execution
+//! - **Non-blocking Poll**: Subscriber poll returns immediately if no messages available
+//! - **Lifecycle Management**: RAII guards for media driver and proper cleanup
 //!
 //! # Running this test
 //!
@@ -23,10 +32,12 @@ use aerofoil::transport::rusteron::{RusteronPublisher, RusteronSubscriber};
 use aerofoil::transport::{AeronPublisher, AeronSubscriber};
 use rusteron_client::IntoCString;
 use rusteron_media_driver::{AeronDriverContext, AeronDriver};
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use wingfoil::{Graph, GraphState, IntoNode, MutableNode, RunFor, RunMode};
 
 /// RAII guard for managing Aeron media driver lifecycle.
 ///
@@ -76,34 +87,51 @@ impl Drop for MediaDriverGuard {
     }
 }
 
+/// Shared state for SummingNode that can be accessed from outside the graph.
+///
+/// This struct holds the computed results in thread-safe containers
+/// so they can be verified after graph execution completes.
+#[derive(Clone)]
+struct SummingNodeState {
+    sum: Arc<Mutex<i64>>,
+    count: Arc<Mutex<usize>>,
+}
+
+impl SummingNodeState {
+    fn new() -> Self {
+        SummingNodeState {
+            sum: Arc::new(Mutex::new(0)),
+            count: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    fn get_sum(&self) -> i64 {
+        *self.sum.lock().unwrap()
+    }
+
+    fn get_count(&self) -> usize {
+        *self.count.lock().unwrap()
+    }
+}
+
 /// A simple node that polls a Rusteron subscriber and maintains a running sum.
 ///
 /// This demonstrates the pattern for stateful stream processing:
 /// - Wraps a transport subscriber
 /// - Maintains processing state (running sum)
-/// - Polls for input in poll_and_process() method
-/// - Provides output accessor for verification
+/// - Polls for input in cycle() method (called by Wingfoil)
+/// - Shares state via Arc<Mutex<>> for verification
 struct SummingNode {
     subscriber: RusteronSubscriber,
-    running_sum: i64,
-    message_count: usize,
+    state: SummingNodeState,
 }
 
 impl SummingNode {
-    fn new(subscriber: RusteronSubscriber) -> Self {
+    fn new(subscriber: RusteronSubscriber, state: SummingNodeState) -> Self {
         SummingNode {
             subscriber,
-            running_sum: 0,
-            message_count: 0,
+            state,
         }
-    }
-
-    fn sum(&self) -> i64 {
-        self.running_sum
-    }
-
-    fn count(&self) -> usize {
-        self.message_count
     }
 
     /// Polls the subscriber and processes received messages (non-blocking).
@@ -119,12 +147,40 @@ impl SummingNode {
                 let bytes: [u8; 8] = fragment[0..8].try_into().unwrap();
                 let value = i64::from_le_bytes(bytes);
 
-                // Update running sum
-                self.running_sum += value;
-                self.message_count += 1;
+                // Update running sum in shared state
+                *self.state.sum.lock().unwrap() += value;
+                *self.state.count.lock().unwrap() += 1;
             }
             Ok(())
         })
+    }
+}
+
+/// Wingfoil MutableNode implementation for SummingNode.
+///
+/// This enables the node to be registered in a Wingfoil graph and receive
+/// automatic cycle callbacks for polling and processing messages.
+impl MutableNode for SummingNode {
+    /// Called by Wingfoil on each graph cycle to poll for and process messages.
+    ///
+    /// The node polls the Aeron subscriber (non-blocking) and updates its
+    /// running sum for any received i64 values. Returns false to indicate
+    /// the node should continue processing (never completes on its own).
+    fn cycle(&mut self, _state: &mut GraphState) -> bool {
+        // Poll and process any available messages
+        let _ = self.poll_and_process();
+
+        // Return false to indicate we want to continue processing
+        // (the graph will control when to stop based on its run configuration)
+        false
+    }
+
+    /// Register this node to be called on every cycle.
+    ///
+    /// This ensures the node continuously polls for incoming messages
+    /// throughout the graph's execution.
+    fn start(&mut self, state: &mut GraphState) {
+        state.always_callback();
     }
 }
 
@@ -173,9 +229,6 @@ fn test_summing_node_integration() {
     // Wait for connection to stabilize
     thread::sleep(Duration::from_millis(200));
 
-    // Create SummingNode wrapping the subscriber
-    let mut summing_node = SummingNode::new(subscriber);
-
     // When: Publish sequence of i64 values (1, 2, 3, 4, 5)
     let test_values: Vec<i64> = vec![1, 2, 3, 4, 5];
 
@@ -189,27 +242,41 @@ fn test_summing_node_integration() {
     // Give time for messages to propagate
     thread::sleep(Duration::from_millis(100));
 
-    // Poll and process messages in a loop (simulating cycle callbacks)
-    for _ in 0..10 {
-        let _ = summing_node.poll_and_process();
-        thread::sleep(Duration::from_millis(10));
-    }
+    // Create shared state for verificationafter graph execution
+    let state = SummingNodeState::new();
+    let verification_state = state.clone();
 
-    // Then: Verify the sum and message count
+    // Create SummingNode wrapping the subscriber and shared state
+    let summing_node = SummingNode::new(subscriber, state);
+
+    // Wrap in RefCell for Wingfoil's interior mutability pattern
+    let node = RefCell::new(summing_node).into_node();
+
+    // Create and run Wingfoil graph with the SummingNode
+    // Run for 10 cycles to poll and process messages
+    let mut graph = Graph::new(
+        vec![node],
+        RunMode::RealTime,
+        RunFor::Cycles(10),
+    );
+
+    graph.run().expect("Graph execution failed");
+
+    // Then: Verify the sum and message count using the shared state
     assert_eq!(
-        summing_node.count(),
+        verification_state.get_count(),
         5,
         "Expected to receive 5 messages, got {}",
-        summing_node.count()
+        verification_state.get_count()
     );
 
     assert_eq!(
-        summing_node.sum(),
+        verification_state.get_sum(),
         15,
         "Expected sum of 15 (1+2+3+4+5), got {}",
-        summing_node.sum()
+        verification_state.get_sum()
     );
 
     println!("✓ SummingNode successfully processed {} messages with sum = {}",
-             summing_node.count(), summing_node.sum());
+             verification_state.get_count(), verification_state.get_sum());
 }
