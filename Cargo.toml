@@ -5,7 +5,10 @@ edition = "2021"
 
 [dependencies]
 rusteron-client = { version = "0.1", optional = true }
+rusteron-media-driver = { version = "0.1", optional = true }
+wingfoil = "0.1"
 
 [features]
 default = ["rusteron"]
 rusteron = ["rusteron-client"]
+integration-tests = ["rusteron-media-driver"]

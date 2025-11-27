@@ -56,6 +56,7 @@ Rust library providing wingfoil aeron adapters
   - Self-contained (start/stop dependencies automatically)
   - Use feature flags to conditionally compile (not `#[ignore]`)
   - Fail fast with clear error messages if dependencies unavailable
+  - Tests requiring the aeron media driver should start the driver or fail
 - Use RAII guards for automatic resource cleanup (MediaDriverGuard pattern)
 - Integration tests should be runnable via `cargo test` without manual setup
 - Write integration tests in `tests/` directory at project root (standard Cargo convention)
@@ -84,14 +85,15 @@ Rust library providing wingfoil aeron adapters
 
 ## Important Constraints
 - The input and output code paths must be non-blocking and low latency
-
+- Consider processor and OS specific optimisation for high performance. Maintain @possible-optimisations.md for future implementations 
 ## External Dependencies
 
 ### Aeron Media Driver
 - **Purpose**: Required for Rusteron and aeron-rs transport backends to function
-- **Installation**:
-  - Download from https://github.com/real-logic/aeron/releases
-  - Or install via package manager (varies by platform)
+- **Build and Installation**:
+  - git clone https://github.com/real-logic/aeron
+  - cd aeron
+  - ./cppbuild/cppbuild --build-aeron-driver --no-tests
 - **Runtime requirement**: Media driver must be running before starting applications that use Aeron transports
 - **Development**: Required for integration tests
 - **Documentation**: https://github.com/real-logic/aeron/wiki
