@@ -19,12 +19,14 @@ Rust library providing wingfoil aeron adapters
 - Configuration object model the abstracts the configuration source
 - Support both rusteron and aeron-rs clients with feature flags
 - Use static dispatch in hot paths, ban dynamic traits in hot paths
+- Suggests improvements to the openspec meta prmopts after learning lessons from implementation
+- Use idiomatic rust cargo examples instead of examples in modules
+
+### Documentation Conventions
+- Document design decisions using unit test cases
 - Document latency compromises between rusteron and aeron-rs
 - Document cases of clone and copy with explanations
-- Document design decisions using unit test cases
-- Suggests improvements to the openspec meta prmopts after learning lessons from implementation
-- No code in documents, simply add working code files and reference them from documentation
-- Use idiomatic rust cargo examples instead of examples in modules
+- Never add code in markup documentation. Simply add working code files and reference them from documentation
 - Keep documentation for rusteron separate from aeron_rs documentation in their own modules
 
 ### Wingfoil Node Conventions
@@ -56,7 +58,7 @@ Rust library providing wingfoil aeron adapters
 - For traits where mockall has limitations (complex lifetimes, generic closures), provide manual test implementations inline
 - Only expose mock objects in test configurations
 - Validate examples in comments with doc tests
-- Use the given when then style for unit tests
+- Use the given when then style for unit test name
 **For detailed mocking guidelines, see [mocking.md](mocking.md)**
 
 ### Integration Testing Strategy

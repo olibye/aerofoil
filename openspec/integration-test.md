@@ -84,9 +84,40 @@ The build script will warn if aeronmd is not found.
 
 See GitHub Actions workflows in `.github/workflows/` for complete examples.
 
+## Testing Patterns with Wingfoil
+
+### Observing Node State During Tests
+
+Use **callback closures with Rc<RefCell<>>** to observe node state, following Wingfoil's single-threaded pattern.
+
+**Why Rc<RefCell<>> not Arc<Mutex<>>?**
+- Wingfoil graphs execute in a single thread
+- `Rc<RefCell<>>` provides interior mutability with runtime borrow checking
+- No synchronization overhead (better performance)
+- Follows Wingfoil's design philosophy
+
+See `tests/summing_node_test.rs:266-322` for complete working example of the callback closure pattern.
+
+### CallBackStream Usage
+
+**CallBackStream is for INPUT, not output collection.**
+
+`CallBackStream` is designed to feed test data INTO a graph at specified times. It is NOT used for collecting outputs from nodes - use the callback closure pattern instead.
+
+Reference: https://docs.rs/wingfoil/0.1.11/wingfoil/struct.CallBackStream.html
+
+### Interior Mutability Pattern
+
+Wingfoil nodes must be wrapped in `RefCell` for interior mutability. This allows Wingfoil to call `cycle(&mut self)` even though nodes are stored in `Rc<dyn Node>`. The `RefCell` performs runtime borrow checking to ensure safe mutable access in the single-threaded graph execution context.
+
+See `tests/summing_node_test.rs:280-281` for example.
+
+Reference: https://docs.rs/wingfoil/0.1.11/wingfoil/trait.MutableNode.html
+
 ## References
 
 - Aeron releases: https://github.com/real-logic/aeron/releases
 - Testing strategy: [project.md](project.md#integration-testing-strategy)
 - MediaDriverGuard implementation: See `#[cfg(test)]` modules in rusteron adapter
-- Integration test examples: See `tests/` directory
+- Integration test examples: See `tests/` directory, especially `tests/summing_node_test.rs`
+- Wingfoil documentation: https://docs.rs/wingfoil/0.1.11/wingfoil/

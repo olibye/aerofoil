@@ -9,9 +9,19 @@
 //!
 //! - **Wingfoil Node**: Implementing `MutableNode` trait for graph-based execution
 //! - **Aeron Transport**: Using RusteronSubscriber for zero-copy message receipt
-//! - **Shared State**: Using Arc<Mutex<>> to access node state after graph execution
+//! - **Callback Output**: Using closure callbacks with Rc<RefCell<>> to observe node state
 //! - **Non-blocking Poll**: Subscriber poll returns immediately if no messages available
 //! - **Lifecycle Management**: RAII guards for media driver and proper cleanup
+//!
+//! # Wingfoil Single-threaded Pattern
+//!
+//! Following Wingfoil's design, nodes execute in a single-threaded context. This test
+//! demonstrates the proper pattern:
+//! - Node maintains simple, non-synchronized state (i64, usize)
+//! - Output via callback closure that captures Rc<RefCell<Vec<T>>>
+//! - Rc<RefCell<>> used only for test observation, appropriate for single-threaded execution
+//!
+//! Reference: https://docs.rs/wingfoil/0.1.11/wingfoil/
 //!
 //! # Running this test
 //!
@@ -33,8 +43,9 @@ use aerofoil::transport::{AeronPublisher, AeronSubscriber};
 use rusteron_client::IntoCString;
 use rusteron_media_driver::{AeronDriverContext, AeronDriver};
 use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use wingfoil::{Graph, GraphState, IntoNode, MutableNode, RunFor, RunMode};
@@ -87,50 +98,48 @@ impl Drop for MediaDriverGuard {
     }
 }
 
-/// Shared state for SummingNode that can be accessed from outside the graph.
+/// Output data from SummingNode containing the current sum and message count.
 ///
-/// This struct holds the computed results in thread-safe containers
-/// so they can be verified after graph execution completes.
-#[derive(Clone)]
-struct SummingNodeState {
-    sum: Arc<Mutex<i64>>,
-    count: Arc<Mutex<usize>>,
-}
-
-impl SummingNodeState {
-    fn new() -> Self {
-        SummingNodeState {
-            sum: Arc::new(Mutex::new(0)),
-            count: Arc::new(Mutex::new(0)),
-        }
-    }
-
-    fn get_sum(&self) -> i64 {
-        *self.sum.lock().unwrap()
-    }
-
-    fn get_count(&self) -> usize {
-        *self.count.lock().unwrap()
-    }
+/// This struct is emitted by the node to communicate its state, following
+/// Wingfoil's single-threaded pattern without thread-safe primitives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SummingNodeOutput {
+    sum: i64,
+    count: usize,
 }
 
 /// A simple node that polls a Rusteron subscriber and maintains a running sum.
 ///
-/// This demonstrates the pattern for stateful stream processing:
+/// This demonstrates the pattern for stateful stream processing with Wingfoil:
 /// - Wraps a transport subscriber
 /// - Maintains processing state (running sum)
 /// - Polls for input in cycle() method (called by Wingfoil)
-/// - Shares state via Arc<Mutex<>> for verification
-struct SummingNode {
+/// - Outputs state via callback for test observation (single-threaded, no Arc<Mutex<>>)
+///
+/// For testing, use a closure that captures `Rc<RefCell<Vec<T>>>` to collect outputs.
+/// This is Wingfoil's single-threaded pattern for observing node state during tests.
+///
+/// Reference: https://docs.rs/wingfoil/0.1.11/wingfoil/trait.MutableNode.html
+struct SummingNode<F>
+where
+    F: FnMut(SummingNodeOutput),
+{
     subscriber: RusteronSubscriber,
-    state: SummingNodeState,
+    running_sum: i64,
+    message_count: usize,
+    output_callback: F,
 }
 
-impl SummingNode {
-    fn new(subscriber: RusteronSubscriber, state: SummingNodeState) -> Self {
+impl<F> SummingNode<F>
+where
+    F: FnMut(SummingNodeOutput),
+{
+    fn new(subscriber: RusteronSubscriber, output_callback: F) -> Self {
         SummingNode {
             subscriber,
-            state,
+            running_sum: 0,
+            message_count: 0,
+            output_callback,
         }
     }
 
@@ -147,9 +156,9 @@ impl SummingNode {
                 let bytes: [u8; 8] = fragment[0..8].try_into().unwrap();
                 let value = i64::from_le_bytes(bytes);
 
-                // Update running sum in shared state
-                *self.state.sum.lock().unwrap() += value;
-                *self.state.count.lock().unwrap() += 1;
+                // Update running sum (simple, single-threaded state)
+                self.running_sum += value;
+                self.message_count += 1;
             }
             Ok(())
         })
@@ -160,15 +169,27 @@ impl SummingNode {
 ///
 /// This enables the node to be registered in a Wingfoil graph and receive
 /// automatic cycle callbacks for polling and processing messages.
-impl MutableNode for SummingNode {
+///
+/// Reference: https://docs.rs/wingfoil/0.1.11/wingfoil/trait.MutableNode.html
+impl<F> MutableNode for SummingNode<F>
+where
+    F: FnMut(SummingNodeOutput) + 'static,
+{
     /// Called by Wingfoil on each graph cycle to poll for and process messages.
     ///
     /// The node polls the Aeron subscriber (non-blocking) and updates its
-    /// running sum for any received i64 values. Returns false to indicate
-    /// the node should continue processing (never completes on its own).
+    /// running sum for any received i64 values. After processing, it invokes
+    /// the output callback with the current state for test observation.
+    /// Returns false to indicate the node should continue processing.
     fn cycle(&mut self, _state: &mut GraphState) -> bool {
         // Poll and process any available messages
         let _ = self.poll_and_process();
+
+        // Invoke callback with current state for test observation
+        (self.output_callback)(SummingNodeOutput {
+            sum: self.running_sum,
+            count: self.message_count,
+        });
 
         // Return false to indicate we want to continue processing
         // (the graph will control when to stop based on its run configuration)
@@ -185,7 +206,7 @@ impl MutableNode for SummingNode {
 }
 
 #[test]
-fn test_summing_node_integration() {
+fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum() {
     // Given: Start media driver with RAII guard (auto cleanup on drop)
     let _driver = MediaDriverGuard::start()
         .expect("Failed to start media driver - see error message for installation instructions");
@@ -199,7 +220,7 @@ fn test_summing_node_integration() {
     let channel = "aeron:ipc";
     let stream_id = 1001;
 
-    // Create publisher asynchronously
+    // Create publisher
     let async_pub = aeron
         .async_add_publication(&channel.into_c_string(), stream_id)
         .expect("Failed to start async publication");
@@ -210,7 +231,7 @@ fn test_summing_node_integration() {
 
     let mut publisher = RusteronPublisher::new(publication);
 
-    // Create subscriber asynchronously
+    // Create subscriber
     let async_sub = aeron
         .async_add_subscription(
             &channel.into_c_string(),
@@ -242,12 +263,19 @@ fn test_summing_node_integration() {
     // Give time for messages to propagate
     thread::sleep(Duration::from_millis(100));
 
-    // Create shared state for verificationafter graph execution
-    let state = SummingNodeState::new();
-    let verification_state = state.clone();
+    // Create a callback to collect outputs from the node
+    // This uses Rc<RefCell<>> which is Wingfoil's single-threaded pattern for test observation
+    // Reference: https://docs.rs/wingfoil/0.1.11/wingfoil/
+    let outputs: Rc<RefCell<Vec<SummingNodeOutput>>> = Rc::new(RefCell::new(Vec::new()));
+    let outputs_clone = Rc::clone(&outputs);
 
-    // Create SummingNode wrapping the subscriber and shared state
-    let summing_node = SummingNode::new(subscriber, state);
+    // Create callback closure that captures the outputs vector
+    let output_callback = move |output: SummingNodeOutput| {
+        outputs_clone.borrow_mut().push(output);
+    };
+
+    // Create SummingNode with the callback
+    let summing_node = SummingNode::new(subscriber, output_callback);
 
     // Wrap in RefCell for Wingfoil's interior mutability pattern
     let node = RefCell::new(summing_node).into_node();
@@ -262,21 +290,34 @@ fn test_summing_node_integration() {
 
     graph.run().expect("Graph execution failed");
 
-    // Then: Verify the sum and message count using the shared state
+    // Then: Verify the sum and message count from the collected outputs
+    let collected_outputs = outputs.borrow();
+
+    // We should have output from each cycle (10 cycles)
+    assert!(
+        !collected_outputs.is_empty(),
+        "Expected to collect outputs, but got none"
+    );
+
+    // Get the final output (last cycle)
+    let final_output = collected_outputs.last().unwrap();
+
     assert_eq!(
-        verification_state.get_count(),
+        final_output.count,
         5,
         "Expected to receive 5 messages, got {}",
-        verification_state.get_count()
+        final_output.count
     );
 
     assert_eq!(
-        verification_state.get_sum(),
+        final_output.sum,
         15,
         "Expected sum of 15 (1+2+3+4+5), got {}",
-        verification_state.get_sum()
+        final_output.sum
     );
 
-    println!("✓ SummingNode successfully processed {} messages with sum = {}",
-             verification_state.get_count(), verification_state.get_sum());
+    println!(
+        "✓ SummingNode successfully processed {} messages with sum = {}",
+        final_output.count, final_output.sum
+    );
 }
