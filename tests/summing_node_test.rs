@@ -41,7 +41,7 @@
 use aerofoil::transport::rusteron::{RusteronPublisher, RusteronSubscriber};
 use aerofoil::transport::{AeronPublisher, AeronSubscriber};
 use rusteron_client::IntoCString;
-use rusteron_media_driver::{AeronDriverContext, AeronDriver};
+use rusteron_media_driver::{AeronDriver, AeronDriverContext};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -67,8 +67,8 @@ impl MediaDriverGuard {
     /// message pointing to installation instructions.
     fn start() -> Result<Self, String> {
         // Try to create driver context - this will fail if libaeron_driver.dylib is not available
-        let driver_context = AeronDriverContext::new()
-            .map_err(|e| format!(
+        let driver_context = AeronDriverContext::new().map_err(|e| {
+            format!(
                 "Failed to create media driver context: {:?}\n\n\
                  This likely means the Aeron C libraries are not installed.\n\n\
                  On macOS, you need to:\n\
@@ -77,7 +77,8 @@ impl MediaDriverGuard {
                  3. Or set DYLD_LIBRARY_PATH to point to the lib directory\n\n\
                  For detailed instructions, see openspec/integration-test.md",
                 e
-            ))?;
+            )
+        })?;
 
         // Launch embedded driver - returns (Arc<AtomicBool>, JoinHandle)
         let (stop_signal, _driver_handle) = AeronDriver::launch_embedded(driver_context, false);
@@ -282,11 +283,7 @@ fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum(
 
     // Create and run Wingfoil graph with the SummingNode
     // Run for 10 cycles to poll and process messages
-    let mut graph = Graph::new(
-        vec![node],
-        RunMode::RealTime,
-        RunFor::Cycles(10),
-    );
+    let mut graph = Graph::new(vec![node], RunMode::RealTime, RunFor::Cycles(10));
 
     graph.run().expect("Graph execution failed");
 
@@ -303,15 +300,13 @@ fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum(
     let final_output = collected_outputs.last().unwrap();
 
     assert_eq!(
-        final_output.count,
-        5,
+        final_output.count, 5,
         "Expected to receive 5 messages, got {}",
         final_output.count
     );
 
     assert_eq!(
-        final_output.sum,
-        15,
+        final_output.sum, 15,
         "Expected sum of 15 (1+2+3+4+5), got {}",
         final_output.sum
     );
