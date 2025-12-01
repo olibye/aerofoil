@@ -21,6 +21,8 @@ Rust library providing wingfoil aeron adapters
 - Use static dispatch in hot paths, ban dynamic traits in hot paths
 - Suggests improvements to the openspec meta prmopts after learning lessons from implementation
 - Use idiomatic rust cargo examples instead of examples in modules
+- Prefer simple functions to macros where possible
+- Factor out common code into helper functions and classes even for tests
 
 ### Documentation Conventions
 - Document design decisions using unit test cases
@@ -38,6 +40,8 @@ Rust library providing wingfoil aeron adapters
   - Interfacing with external multi-threaded systems outside the graph
 - Production node implementations should expose state via Wingfoil's Stream trait, not Arc<Mutex<>>
 - Keep node implementations simple and fast - avoid synchronization overhead in hot paths
+- A Node's cycle function should only output true if there's a new value.
+
 ### Lessons learned
 - Document lessons learned in @openspec/lessons-learned/ consider these lessos in future designs
 

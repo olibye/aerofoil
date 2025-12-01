@@ -4,13 +4,57 @@
 //! with Wingfoil's stream processing framework using Element types and the
 //! peek-based composition pattern.
 //!
+//! # Choosing Between Node Types
+//!
+//! This module provides two Aeron subscriber node types with different access patterns:
+//!
+//! ## AeronSubscriberNode<T> - Reference Access
+//!
+//! Implements [`StreamPeekRef<T>`](wingfoil::StreamPeekRef) for reference-based access.
+//!
+//! **Use when:**
+//! - Type is large (>128 bytes) and expensive to clone
+//! - Type is already wrapped in `Rc<T>` for sharing
+//! - Implementing zero-copy patterns
+//! - Need to minimize clones in hot paths
+//!
+//! **Access pattern:**
+//! ```rust,ignore
+//! let value: i64 = *self.upstream.borrow().peek_ref();
+//! ```
+//!
+//! ## AeronSubscriberValueNode<T> - Value Access
+//!
+//! Implements [`StreamPeek<T>`](wingfoil::StreamPeek) for value-based access.
+//!
+//! **Use when:**
+//! - Type is primitive (i64, f64, bool, etc.)
+//! - Type implements `Copy`
+//! - Type is small and cheap to clone
+//! - Code clarity prioritized over micro-optimizations
+//!
+//! **Access pattern:**
+//! ```rust,ignore
+//! let value: i64 = self.upstream.peek_value(); // Clean, no deref needed
+//! ```
+//!
+//! ## Comparison Table
+//!
+//! | Aspect | AeronSubscriberNode | AeronSubscriberValueNode |
+//! |--------|---------------------|--------------------------|
+//! | Trait | `StreamPeekRef<T>` | `StreamPeek<T>` |
+//! | Access | `upstream.borrow().peek_ref()` | `upstream.peek_value()` |
+//! | Returns | `&T` | `T` |
+//! | Best for | Large types, Rc-wrapped | Primitives, Copy types |
+//! | Cloning | Explicit via `*ref` | Implicit in return |
+//!
 //! # Peek-Based Composition Pattern
 //!
-//! Wingfoil nodes compose using `StreamPeekRef<T>` trait and the peek pattern:
+//! Wingfoil nodes compose using peek traits:
 //!
-//! 1. **Transport nodes** (like [`AeronSubscriberNode`]) poll external sources and implement `StreamPeekRef<T>`
-//! 2. **Business logic nodes** accept upstream dependencies as `Rc<RefCell<dyn StreamPeekRef<T>>>`
-//! 3. **Data access** uses `upstream.borrow().peek_ref()` to read the latest value
+//! 1. **Transport nodes** (like [`AeronSubscriberNode`] or [`AeronSubscriberValueNode`]) poll external sources
+//! 2. **Business logic nodes** accept upstream dependencies using the appropriate trait
+//! 3. **Data access** uses either `peek_ref()` or `peek_value()` to read the latest value
 //!
 //! # Element Types
 //!
@@ -60,4 +104,4 @@
 
 mod subscriber;
 
-pub use subscriber::AeronSubscriberNode;
+pub use subscriber::{AeronSubscriberNode, AeronSubscriberValueNode};

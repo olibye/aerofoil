@@ -1,10 +1,56 @@
 //! Aeron subscriber node for Wingfoil stream processing.
 //!
-//! This module provides [`AeronSubscriberNode`], a Wingfoil node that bridges
-//! Aeron transport with Wingfoil's stream processing framework using Element types.
+//! This module provides [`AeronSubscriberNode`] and [`AeronSubscriberValueNode`],
+//! Wingfoil nodes that bridge Aeron transport with Wingfoil's stream processing
+//! framework using Element types.
 
 use crate::transport::{AeronSubscriber, TransportError};
-use wingfoil::{Element, GraphState, MutableNode, StreamPeekRef};
+use std::cell::Ref;
+use wingfoil::{Element, GraphState, MutableNode, StreamPeek, StreamPeekRef};
+
+/// Internal shared implementation for Aeron subscriber nodes.
+///
+/// This struct contains the common state and logic used by both [`AeronSubscriberNode`]
+/// and [`AeronSubscriberValueNode`]. It is not part of the public API - users should
+/// use one of the public node types instead.
+struct AeronSubscriberCore<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Option<T>,
+    S: AeronSubscriber,
+{
+    subscriber: S,
+    parser: F,
+    current_value: T,
+}
+
+impl<T, F, S> AeronSubscriberCore<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Option<T>,
+    S: AeronSubscriber,
+{
+    fn new(subscriber: S, parser: F, initial_value: T) -> Self {
+        Self {
+            subscriber,
+            parser,
+            current_value: initial_value,
+        }
+    }
+
+    fn poll_and_process(&mut self) -> Result<usize, TransportError> {
+        self.subscriber.poll(|fragment| {
+            if let Some(parsed_value) = (self.parser)(fragment) {
+                self.current_value = parsed_value;
+            }
+            Ok(())
+        })
+    }
+
+    fn current_value(&self) -> &T {
+        &self.current_value
+    }
+}
 
 /// A Wingfoil node that polls an Aeron subscriber and implements `StreamPeekRef<T>`.
 ///
@@ -94,12 +140,7 @@ where
     F: FnMut(&[u8]) -> Option<T>,
     S: AeronSubscriber,
 {
-    /// The Aeron subscriber to poll for messages
-    subscriber: S,
-    /// Parser function to convert byte fragments into typed values
-    parser: F,
-    /// The most recently parsed value (or initial value if no messages received)
-    current_value: T,
+    core: AeronSubscriberCore<T, F, S>,
 }
 
 impl<T, F, S> AeronSubscriberNode<T, F, S>
@@ -135,34 +176,11 @@ where
     /// let node = AeronSubscriberNode::new(subscriber, parser, 0);
     /// ```
     pub fn new(subscriber: S, parser: F, initial_value: T) -> Self {
-        AeronSubscriberNode {
-            subscriber,
-            parser,
-            current_value: initial_value,
+        Self {
+            core: AeronSubscriberCore::new(subscriber, parser, initial_value),
         }
     }
 
-    /// Polls the subscriber and processes received messages.
-    ///
-    /// This method is called internally by the `cycle()` implementation.
-    /// It polls the Aeron subscriber (non-blocking) and attempts to parse
-    /// each received fragment. If parsing succeeds, `current_value` is updated.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(count)` - Number of fragments processed
-    /// - `Err(_)` - Transport error occurred during polling
-    fn poll_and_process(&mut self) -> Result<usize, TransportError> {
-        self.subscriber.poll(|fragment| {
-            // Try to parse the fragment using the user-provided parser
-            if let Some(parsed_value) = (self.parser)(fragment) {
-                // Update current value with successfully parsed data
-                self.current_value = parsed_value;
-            }
-            // Continue processing even if this fragment failed to parse
-            Ok(())
-        })
-    }
 }
 
 /// Wingfoil `MutableNode` implementation.
@@ -183,7 +201,7 @@ where
     fn cycle(&mut self, _state: &mut GraphState) -> bool {
         // Poll and process any available messages
         // Ignore errors - we continue processing on the next cycle
-        let _ = self.poll_and_process();
+        let _ = self.core.poll_and_process();
 
         // Return false to indicate we want to continue processing
         // (the graph will control when to stop based on its run configuration)
@@ -215,7 +233,199 @@ where
     /// produced by this stream. If no messages have been successfully parsed,
     /// this returns a reference to the initial value provided during construction.
     fn peek_ref(&self) -> &T {
-        &self.current_value
+        self.core.current_value()
+    }
+}
+
+/// A Wingfoil node that polls an Aeron subscriber and implements `StreamPeek<T>`.
+///
+/// This node provides value-based access for cheap-to-clone types, complementing
+/// [`AeronSubscriberNode`] which uses reference-based access. This node bridges
+/// Aeron transport with Wingfoil's stream processing by:
+/// - Polling an [`AeronSubscriber`] for incoming messages (non-blocking)
+/// - Parsing messages using a user-provided parser function
+/// - Providing the latest parsed value via `peek_value()` for downstream consumption
+///
+/// # Type Parameters
+///
+/// - `T`: The type of values produced by parsing Aeron messages (must implement `Element`)
+/// - `F`: The parser function type, `FnMut(&[u8]) -> Option<T>`
+/// - `S`: The Aeron subscriber implementation
+///
+/// # Element Trait
+///
+/// The message type `T` must implement Wingfoil's `Element` trait, which requires:
+/// `Debug + Clone + Default + 'static`. This ensures:
+/// - `Debug`: For logging and debugging
+/// - `Clone`: For value copying (must be cheap to clone - use `AeronSubscriberNode` for large types)
+/// - `Default`: For providing an initial value
+/// - `'static`: No non-static references
+///
+/// # StreamPeek Implementation
+///
+/// This node implements `StreamPeek<T>`, allowing downstream nodes to access
+/// the latest parsed value via `peek_value()`. This provides cleaner ergonomics
+/// for cheap-to-clone types compared to the reference-based pattern.
+///
+/// # Choosing Between Node Types
+///
+/// - **Use `AeronSubscriberValueNode`** (this type) for:
+///   - Primitives (i64, f64, bool, etc.)
+///   - Types implementing `Copy`
+///   - Small structs (<= 128 bytes)
+///   - When code clarity is prioritized
+///
+/// - **Use `AeronSubscriberNode`** for:
+///   - Large types (> 128 bytes)
+///   - `Rc<T>` wrapped types
+///   - Zero-copy patterns
+///   - Performance-critical hot paths
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use aerofoil::nodes::AeronSubscriberValueNode;
+/// use aerofoil::transport::rusteron::RusteronSubscriber;
+/// use std::cell::RefCell;
+/// use std::rc::Rc;
+/// use wingfoil::{Graph, RunMode, RunFor, StreamPeek};
+///
+/// // Create a parser for i64 messages (little-endian, 8 bytes)
+/// let parser = |fragment: &[u8]| -> Option<i64> {
+///     if fragment.len() >= 8 {
+///         let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
+///         Some(i64::from_le_bytes(bytes))
+///     } else {
+///         None
+///     }
+/// };
+///
+/// // Create the subscriber node
+/// let subscriber = RusteronSubscriber::new(subscription);
+/// let node = AeronSubscriberValueNode::new(subscriber, parser, 0);
+///
+/// // Wrap for graph integration
+/// let node_rc = Rc::new(RefCell::new(node));
+/// let upstream_ref = node_rc.clone();  // For downstream nodes
+///
+/// // Downstream nodes use peek_value() - clean, no deref needed
+/// let value: i64 = upstream_ref.peek_value();
+/// ```
+pub struct AeronSubscriberValueNode<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Option<T>,
+    S: AeronSubscriber,
+{
+    core: AeronSubscriberCore<T, F, S>,
+}
+
+impl<T, F, S> AeronSubscriberValueNode<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Option<T>,
+    S: AeronSubscriber,
+{
+    /// Creates a new `AeronSubscriberValueNode`.
+    ///
+    /// # Parameters
+    ///
+    /// - `subscriber`: The Aeron subscriber to poll for messages
+    /// - `parser`: Function to parse byte fragments into typed values
+    /// - `initial_value`: The initial value before any messages are received
+    ///
+    /// # Returns
+    ///
+    /// A new `AeronSubscriberValueNode` instance ready to be added to a Wingfoil graph.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let parser = |fragment: &[u8]| -> Option<i64> {
+    ///     if fragment.len() >= 8 {
+    ///         let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
+    ///         Some(i64::from_le_bytes(bytes))
+    ///     } else {
+    ///         None
+    ///     }
+    /// };
+    ///
+    /// let node = AeronSubscriberValueNode::new(subscriber, parser, 0);
+    /// ```
+    pub fn new(subscriber: S, parser: F, initial_value: T) -> Self {
+        Self {
+            core: AeronSubscriberCore::new(subscriber, parser, initial_value),
+        }
+    }
+}
+
+/// Wingfoil `MutableNode` implementation.
+///
+/// This enables the node to be registered in a Wingfoil graph and receive
+/// automatic cycle callbacks for polling and processing messages.
+impl<T, F, S> MutableNode for AeronSubscriberValueNode<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Option<T> + 'static,
+    S: AeronSubscriber + 'static,
+{
+    /// Called by Wingfoil on each graph cycle to poll for and process messages.
+    ///
+    /// This method polls the Aeron subscriber (non-blocking) and processes any
+    /// available messages, updating the current value when messages are successfully
+    /// parsed. Returns `false` to indicate the node should continue processing.
+    fn cycle(&mut self, _state: &mut GraphState) -> bool {
+        // Poll and process any available messages
+        // Ignore errors - we continue processing on the next cycle
+        let _ = self.core.poll_and_process();
+
+        // Return false to indicate we want to continue processing
+        // (the graph will control when to stop based on its run configuration)
+        false
+    }
+
+    /// Register this node to be called on every cycle.
+    ///
+    /// This ensures the node continuously polls for incoming messages
+    /// throughout the graph's execution.
+    fn start(&mut self, state: &mut GraphState) {
+        state.always_callback();
+    }
+}
+
+/// Wingfoil `StreamPeek<T>` implementation.
+///
+/// This allows downstream nodes to access the latest parsed value via `peek_value()`,
+/// providing clean ergonomics for cheap-to-clone types without explicit dereferencing.
+impl<T, F, S> StreamPeek<T> for AeronSubscriberValueNode<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Option<T> + 'static,
+    S: AeronSubscriber + 'static,
+{
+    /// Returns the most recently parsed value by cloning.
+    ///
+    /// Downstream nodes can call this method to get a copy of the latest value
+    /// produced by this stream. If no messages have been successfully parsed,
+    /// this returns a clone of the initial value provided during construction.
+    ///
+    /// This provides cleaner ergonomics for cheap-to-clone types compared to
+    /// the reference-based `peek_ref()` pattern used by `AeronSubscriberNode`.
+    fn peek_value(&self) -> T {
+        self.core.current_value().clone()
+    }
+
+    /// Not supported - panics if called.
+    ///
+    /// `AeronSubscriberValueNode` uses value-based access via `peek_value()`.
+    /// This method is part of the `StreamPeek` trait but is not applicable
+    /// to this node type.
+    ///
+    /// # Panics
+    ///
+    /// Always panics with a message directing users to use `peek_value()` instead.
+    fn peek_ref_cell(&self) -> Ref<'_, T> {
+        panic!("AeronSubscriberValueNode uses value access - call peek_value() instead")
     }
 }
 
@@ -284,7 +494,7 @@ mod tests {
         let mut node = AeronSubscriberNode::new(subscriber, parser, 0);
 
         // When: Poll and process messages
-        let result = node.poll_and_process();
+        let result = node.core.poll_and_process();
 
         // Then: Polling succeeds and processes 2 messages
         assert!(result.is_ok());
@@ -325,7 +535,7 @@ mod tests {
         let mut node = AeronSubscriberNode::new(subscriber, parser, Trade::default());
 
         // Then: Compiles successfully and parses correctly
-        node.poll_and_process().unwrap();
+        node.core.poll_and_process().unwrap();
         assert_eq!(node.peek_ref().price, 123.45);
         assert_eq!(node.peek_ref().quantity, 100);
     }
@@ -349,7 +559,7 @@ mod tests {
         let mut node = AeronSubscriberNode::new(subscriber, parser, 0);
 
         // When: Poll and process messages
-        node.poll_and_process().unwrap();
+        node.core.poll_and_process().unwrap();
 
         // Then: peek_ref returns the parsed value
         assert_eq!(*node.peek_ref(), 999);
@@ -375,7 +585,7 @@ mod tests {
         let mut node = AeronSubscriberNode::new(subscriber, parser, 42);
 
         // When: Poll and process invalid message
-        node.poll_and_process().unwrap();
+        node.core.poll_and_process().unwrap();
 
         // Then: Current value remains at initial value (42)
         assert_eq!(*node.peek_ref(), 42);
@@ -400,7 +610,7 @@ mod tests {
         let mut node = AeronSubscriberNode::new(subscriber, parser, 123);
 
         // When: Poll with no messages available
-        let result = node.poll_and_process();
+        let result = node.core.poll_and_process();
 
         // Then: Polling succeeds with 0 messages processed
         assert!(result.is_ok());
