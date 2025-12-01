@@ -73,6 +73,15 @@ Rust library providing wingfoil aeron adapters
   - Use feature flags to conditionally compile (not `#[ignore]`)
   - Fail fast with clear error messages if dependencies unavailable
   - Tests requiring the aeron media driver should start the driver or fail
+- **Shared Test Helpers** (`tests/common/mod.rs`):
+  - ALL common test code MUST be in `tests/common/mod.rs` module
+  - NEVER duplicate test helpers (MediaDriverGuard, test nodes, etc.) across test files
+  - Before creating a new test helper, CHECK if similar functionality exists in `tests/common/mod.rs`
+  - Common helpers include:
+    - `MediaDriverGuard` - RAII guard for Aeron media driver lifecycle
+    - `SummingNode` - Example node demonstrating reference-based access (`StreamPeekRef`)
+    - `CountingNode` - Example node demonstrating value-based access (`StreamPeek`)
+  - Import from common: `mod common; use common::{MediaDriverGuard, ...};`
 - Use RAII guards for automatic resource cleanup (MediaDriverGuard pattern)
 - Integration tests should be runnable via `cargo test` without manual setup
 - Write integration tests in `tests/` directory at project root (standard Cargo convention)

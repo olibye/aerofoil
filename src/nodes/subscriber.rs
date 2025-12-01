@@ -5,8 +5,7 @@
 //! framework using Element types.
 
 use crate::transport::{AeronSubscriber, TransportError};
-use std::cell::Ref;
-use wingfoil::{Element, GraphState, MutableNode, StreamPeek, StreamPeekRef};
+use wingfoil::{Element, GraphState, MutableNode, StreamPeekRef};
 
 /// Internal shared implementation for Aeron subscriber nodes.
 ///
@@ -180,7 +179,6 @@ where
             core: AeronSubscriberCore::new(subscriber, parser, initial_value),
         }
     }
-
 }
 
 /// Wingfoil `MutableNode` implementation.
@@ -393,39 +391,24 @@ where
     }
 }
 
-/// Wingfoil `StreamPeek<T>` implementation.
+/// Wingfoil `StreamPeekRef<T>` implementation.
 ///
-/// This allows downstream nodes to access the latest parsed value via `peek_value()`,
-/// providing clean ergonomics for cheap-to-clone types without explicit dereferencing.
-impl<T, F, S> StreamPeek<T> for AeronSubscriberValueNode<T, F, S>
+/// This allows `AeronSubscriberValueNode` to work with Wingfoil's auto-implementation
+/// of `StreamPeek` for `RefCell<T>`, enabling the value-access pattern when wrapped
+/// in RefCell for graph integration.
+impl<T, F, S> StreamPeekRef<T> for AeronSubscriberValueNode<T, F, S>
 where
     T: Element,
     F: FnMut(&[u8]) -> Option<T> + 'static,
     S: AeronSubscriber + 'static,
 {
-    /// Returns the most recently parsed value by cloning.
+    /// Returns a reference to the most recently parsed value.
     ///
-    /// Downstream nodes can call this method to get a copy of the latest value
-    /// produced by this stream. If no messages have been successfully parsed,
-    /// this returns a clone of the initial value provided during construction.
-    ///
-    /// This provides cleaner ergonomics for cheap-to-clone types compared to
-    /// the reference-based `peek_ref()` pattern used by `AeronSubscriberNode`.
-    fn peek_value(&self) -> T {
-        self.core.current_value().clone()
-    }
-
-    /// Not supported - panics if called.
-    ///
-    /// `AeronSubscriberValueNode` uses value-based access via `peek_value()`.
-    /// This method is part of the `StreamPeek` trait but is not applicable
-    /// to this node type.
-    ///
-    /// # Panics
-    ///
-    /// Always panics with a message directing users to use `peek_value()` instead.
-    fn peek_ref_cell(&self) -> Ref<'_, T> {
-        panic!("AeronSubscriberValueNode uses value access - call peek_value() instead")
+    /// This implementation enables Wingfoil's auto-implementation of `StreamPeek`
+    /// for `RefCell<AeronSubscriberValueNode>`, which provides the `peek_value()`
+    /// method for value-based access.
+    fn peek_ref(&self) -> &T {
+        self.core.current_value()
     }
 }
 

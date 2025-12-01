@@ -10,5 +10,4 @@ wingfoil = "0.1"
 
 [features]
 default = ["rusteron"]
-rusteron = ["rusteron-client"]
-integration-tests = ["rusteron-media-driver"]
+rusteron = ["rusteron-client", "rusteron-media-driver"]

@@ -32,154 +32,18 @@
 //! cargo test --test counting_node_value_test --features integration-tests
 //! ```
 
-#![cfg(feature = "integration-tests")]
+mod common;
 
 use aerofoil::nodes::AeronSubscriberValueNode;
 use aerofoil::transport::rusteron::{RusteronPublisher, RusteronSubscriber};
 use aerofoil::transport::AeronPublisher;
+use common::{CountingNode, CountingNodeOutput, MediaDriverGuard};
 use rusteron_client::IntoCString;
-use rusteron_media_driver::{AeronDriver, AeronDriverContext};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use wingfoil::{Graph, GraphState, IntoNode, MutableNode, Node, RunFor, RunMode, StreamPeek};
-
-/// RAII guard for managing Aeron media driver lifecycle.
-struct MediaDriverGuard {
-    stop_signal: Arc<AtomicBool>,
-}
-
-impl MediaDriverGuard {
-    fn start() -> Result<Self, String> {
-        let driver_context = AeronDriverContext::new().map_err(|e| {
-            format!(
-                "Failed to create media driver context: {:?}\n\n\
-                 This likely means the Aeron C libraries are not installed.\n\
-                 For detailed instructions, see openspec/integration-test.md",
-                e
-            )
-        })?;
-
-        let (stop_signal, _driver_handle) = AeronDriver::launch_embedded(driver_context, false);
-        thread::sleep(Duration::from_millis(200));
-
-        Ok(MediaDriverGuard { stop_signal })
-    }
-}
-
-impl Drop for MediaDriverGuard {
-    fn drop(&mut self) {
-        self.stop_signal.store(true, Ordering::SeqCst);
-        thread::sleep(Duration::from_millis(100));
-    }
-}
-
-/// Output data from CountingNode containing the current count and last value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CountingNodeOutput {
-    count: usize,
-    last_value: i64,
-}
-
-/// A simple node that uses value-based access to count messages from upstream.
-///
-/// This demonstrates the **value-access pattern** for cheap-to-clone types:
-/// - Declares upstream dependency using concrete `AeronSubscriberValueNode` type
-/// - Uses `upstream.peek_value()` for clean value access (no deref needed)
-/// - Implements change detection to count unique values
-/// - Outputs state via callback for test observation
-///
-/// # Comparison with Reference Pattern
-///
-/// This node uses `StreamPeek<T>` which provides cleaner ergonomics for primitives:
-///
-/// ```rust,ignore
-/// // Reference pattern (from summing_node_test.rs):
-/// let value: i64 = *self.upstream.borrow().peek_ref();
-///
-/// // Value pattern (this node):
-/// let value: i64 = self.upstream.peek_value();  // Cleaner!
-/// ```
-struct CountingNode<F, P, S>
-where
-    F: FnMut(CountingNodeOutput),
-    P: FnMut(&[u8]) -> Option<i64> + 'static,
-    S: aerofoil::transport::AeronSubscriber + 'static,
-{
-    /// Upstream node providing i64 values via peek_value()
-    upstream: Rc<RefCell<AeronSubscriberValueNode<i64, P, S>>>,
-    /// Count of unique values processed
-    count: usize,
-    /// Last value seen (for change detection)
-    last_value: i64,
-    /// Callback to emit output for test observation
-    output_callback: F,
-}
-
-impl<F, P, S> CountingNode<F, P, S>
-where
-    F: FnMut(CountingNodeOutput),
-    P: FnMut(&[u8]) -> Option<i64> + 'static,
-    S: aerofoil::transport::AeronSubscriber + 'static,
-{
-    fn new(upstream: Rc<RefCell<AeronSubscriberValueNode<i64, P, S>>>, output_callback: F) -> Self {
-        CountingNode {
-            upstream,
-            count: 0,
-            last_value: 0,
-            output_callback,
-        }
-    }
-
-    /// Reads the latest value from upstream using the value-access pattern.
-    ///
-    /// **Key difference from reference pattern:**
-    /// ```rust,ignore
-    /// // Value pattern - clean and direct
-    /// let current = self.upstream.peek_value();
-    ///
-    /// // vs. reference pattern - requires borrow + deref
-    /// let current = *self.upstream.borrow().peek_ref();
-    /// ```
-    fn process_upstream(&mut self) {
-        // Using peek_value() for clean value access - no deref needed!
-        let current_value = self.upstream.peek_value();
-
-        // Only count if the value has changed (new message arrived)
-        if current_value != self.last_value || self.count == 0 {
-            self.count += 1;
-            self.last_value = current_value;
-        }
-    }
-}
-
-/// Wingfoil MutableNode implementation for CountingNode.
-impl<F, P, S> MutableNode for CountingNode<F, P, S>
-where
-    F: FnMut(CountingNodeOutput) + 'static,
-    P: FnMut(&[u8]) -> Option<i64> + 'static,
-    S: aerofoil::transport::AeronSubscriber + 'static,
-{
-    fn cycle(&mut self, _state: &mut GraphState) -> bool {
-        // Process the latest value using value-access pattern
-        self.process_upstream();
-
-        // Invoke callback with current state for test observation
-        (self.output_callback)(CountingNodeOutput {
-            count: self.count,
-            last_value: self.last_value,
-        });
-
-        false
-    }
-
-    fn start(&mut self, state: &mut GraphState) {
-        state.always_callback();
-    }
-}
+use wingfoil::{Graph, IntoNode, Node, RunFor, RunMode};
 
 #[test]
 fn given_aeron_messages_when_value_node_processes_then_counts_correctly() {
