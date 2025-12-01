@@ -1,6 +1,6 @@
 # Peek-Based Node Composition Specification
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: AeronSubscriberNode Element Type Constraint
 
@@ -43,8 +43,6 @@ let parser = |fragment: &[u8]| -> Option<i64> {
 let node = AeronSubscriberNode::new(subscriber, parser, 0i64);
 // Should compile because i64: Element
 ```
-
-## ADDED Requirements
 
 ### Requirement: Peek-Based Downstream Node Pattern
 
