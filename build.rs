@@ -9,15 +9,15 @@ fn main() {
 
 fn check_aeron_availability() {
     // Check if aeronmd is available in PATH
-    let aeronmd_output = Command::new("which")
-        .arg("aeronmd")
-        .output()
-        .ok();
+    let aeronmd_output = Command::new("which").arg("aeronmd").output().ok();
 
     if let Some(output) = aeronmd_output {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            println!("cargo:warning=Aeron media driver found in PATH at: {}", path);
+            println!(
+                "cargo:warning=Aeron media driver found in PATH at: {}",
+                path
+            );
 
             // Derive library path from binary path
             // e.g., /path/to/aeron/cppbuild/Release/binaries/aeronmd

@@ -23,12 +23,8 @@ pub fn result_to_transport_error(result: i64) -> Result<i64, TransportError> {
     match result {
         pos if pos >= 0 => Ok(pos),
         -2 => Err(TransportError::BackPressure),
-        -1 => Err(TransportError::Connection(
-            "Not connected".to_string(),
-        )),
-        -4 => Err(TransportError::Connection(
-            "Publication closed".to_string(),
-        )),
+        -1 => Err(TransportError::Connection("Not connected".to_string())),
+        -4 => Err(TransportError::Connection("Publication closed".to_string())),
         code => Err(TransportError::Backend(format!(
             "Rusteron error code: {}",
             code

@@ -1,25 +1,25 @@
-//! Integration test demonstrating stateful stream processing with Wingfoil and Aeron.
+//! Integration test demonstrating peek-based node composition with Wingfoil and Aeron.
 //!
-//! This test creates a SummingNode that implements Wingfoil's MutableNode trait,
-//! polls a Rusteron subscriber for i64 values, and maintains a running sum.
-//! It demonstrates the complete pattern for building stateful Wingfoil nodes
-//! that process Aeron messages in HFT systems.
+//! This test demonstrates the proper Wingfoil node composition pattern:
+//! - **AeronSubscriberNode**: Transport layer that polls Aeron and implements StreamPeekRef<i64>
+//! - **SummingNode**: Business logic layer that uses peek() to access upstream values
+//! - **Dual-Rc Pattern**: Sharing nodes between graph and upstream references
 //!
 //! # Key Patterns Demonstrated
 //!
-//! - **Wingfoil Node**: Implementing `MutableNode` trait for graph-based execution
-//! - **Aeron Transport**: Using RusteronSubscriber for zero-copy message receipt
-//! - **Callback Output**: Using closure callbacks with Rc<RefCell<>> to observe node state
-//! - **Non-blocking Poll**: Subscriber poll returns immediately if no messages available
+//! - **Separation of Concerns**: Transport (AeronSubscriberNode) separate from logic (SummingNode)
+//! - **Peek-Based Composition**: Downstream nodes use `peek_ref()` to access upstream values
+//! - **Element Types**: Using Wingfoil's Element trait (Debug + Clone + Default + 'static)
+//! - **Dual-Rc Pattern**: Manual Rc<RefCell<>> management for graph integration
+//! - **Callback Output**: Using closures to observe node state (for testing only)
 //! - **Lifecycle Management**: RAII guards for media driver and proper cleanup
 //!
 //! # Wingfoil Single-threaded Pattern
 //!
-//! Following Wingfoil's design, nodes execute in a single-threaded context. This test
-//! demonstrates the proper pattern:
-//! - Node maintains simple, non-synchronized state (i64, usize)
-//! - Output via callback closure that captures Rc<RefCell<Vec<T>>>
-//! - Rc<RefCell<>> used only for test observation, appropriate for single-threaded execution
+//! Following Wingfoil's design, nodes execute in a single-threaded context:
+//! - Nodes maintain simple, non-synchronized state
+//! - Upstream dependencies use `Rc<RefCell<T>>` (single-threaded reference counting)
+//! - Output via callback closure that captures Rc<RefCell<Vec<T>>> for test observation
 //!
 //! Reference: https://docs.rs/wingfoil/0.1.11/wingfoil/
 //!
@@ -38,8 +38,9 @@
 
 #![cfg(feature = "integration-tests")]
 
+use aerofoil::nodes::AeronSubscriberNode;
 use aerofoil::transport::rusteron::{RusteronPublisher, RusteronSubscriber};
-use aerofoil::transport::{AeronPublisher, AeronSubscriber};
+use aerofoil::transport::AeronPublisher;
 use rusteron_client::IntoCString;
 use rusteron_media_driver::{AeronDriver, AeronDriverContext};
 use std::cell::RefCell;
@@ -48,7 +49,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use wingfoil::{Graph, GraphState, IntoNode, MutableNode, RunFor, RunMode};
+use wingfoil::{Graph, GraphState, IntoNode, MutableNode, Node, RunFor, RunMode, StreamPeekRef};
 
 /// RAII guard for managing Aeron media driver lifecycle.
 ///
@@ -109,60 +110,75 @@ struct SummingNodeOutput {
     count: usize,
 }
 
-/// A simple node that polls a Rusteron subscriber and maintains a running sum.
+/// A simple node that reads from an upstream Stream<i64> and maintains a running sum.
 ///
-/// This demonstrates the pattern for stateful stream processing with Wingfoil:
-/// - Wraps a transport subscriber
-/// - Maintains processing state (running sum)
-/// - Polls for input in cycle() method (called by Wingfoil)
-/// - Outputs state via callback for test observation (single-threaded, no Arc<Mutex<>>)
+/// This demonstrates the peek-based pattern for stateful stream processing with Wingfoil:
+/// - Declares upstream dependency as `Rc<RefCell<T>>` where `T: StreamPeekRef<i64>`
+/// - Uses `upstream.borrow().peek_ref()` to access latest value
+/// - Implements change detection to identify new values
+/// - Maintains running sum of all received values
+/// - Outputs state via callback for test observation
+///
+/// This node is **transport-agnostic** - it works with any Stream<i64> implementation,
+/// making it easy to test with mock streams and compose with different data sources.
 ///
 /// For testing, use a closure that captures `Rc<RefCell<Vec<T>>>` to collect outputs.
 /// This is Wingfoil's single-threaded pattern for observing node state during tests.
 ///
 /// Reference: https://docs.rs/wingfoil/0.1.11/wingfoil/trait.MutableNode.html
-struct SummingNode<F>
+struct SummingNode<T, F>
 where
+    T: StreamPeekRef<i64>,
     F: FnMut(SummingNodeOutput),
 {
-    subscriber: RusteronSubscriber,
+    /// Upstream node providing i64 values via peek_ref()
+    upstream: Rc<RefCell<T>>,
+    /// Running sum of all values seen
     running_sum: i64,
+    /// Count of unique values processed
     message_count: usize,
+    /// Last value seen (for change detection)
+    last_value: i64,
+    /// Callback to emit output for test observation
     output_callback: F,
 }
 
-impl<F> SummingNode<F>
+impl<T, F> SummingNode<T, F>
 where
+    T: StreamPeekRef<i64>,
     F: FnMut(SummingNodeOutput),
 {
-    fn new(subscriber: RusteronSubscriber, output_callback: F) -> Self {
+    fn new(upstream: Rc<RefCell<T>>, output_callback: F) -> Self {
         SummingNode {
-            subscriber,
+            upstream,
             running_sum: 0,
             message_count: 0,
+            last_value: 0,
             output_callback,
         }
     }
 
-    /// Polls the subscriber and processes received messages (non-blocking).
+    /// Reads the latest value from upstream and updates the running sum.
     ///
-    /// This method demonstrates the core pattern for stateful processing:
-    /// - Poll subscriber (returns immediately if no messages)
-    /// - Parse binary data from fragment buffers (zero-copy)
-    /// - Update internal state based on received values
-    fn poll_and_process(&mut self) -> Result<usize, aerofoil::transport::TransportError> {
-        self.subscriber.poll(|fragment| {
-            // Parse i64 from fragment buffer (little-endian, 8 bytes)
-            if fragment.len() >= 8 {
-                let bytes: [u8; 8] = fragment[0..8].try_into().unwrap();
-                let value = i64::from_le_bytes(bytes);
+    /// This method demonstrates the core pattern for stateful processing with Wingfoil streams:
+    /// - Use `upstream.borrow().peek_ref()` to access the latest value from the upstream node
+    /// - Track the last processed value to detect when new values arrive
+    /// - Update internal state based on new values
+    ///
+    /// This is transport-agnostic - the upstream could be an AeronSubscriberNode,
+    /// a mock stream for testing, or any other Stream<i64> implementation.
+    fn process_upstream(&mut self) {
+        // Borrow the upstream node and peek at the latest value
+        let current_value = *self.upstream.borrow().peek_ref();
 
-                // Update running sum (simple, single-threaded state)
-                self.running_sum += value;
-                self.message_count += 1;
-            }
-            Ok(())
-        })
+        // Only process if the value has changed (new message arrived)
+        // Note: This is a simple change detection. For production use cases,
+        // you might want to use message sequence numbers or timestamps.
+        if current_value != self.last_value || self.message_count == 0 {
+            self.running_sum += current_value;
+            self.message_count += 1;
+            self.last_value = current_value;
+        }
     }
 }
 
@@ -172,19 +188,20 @@ where
 /// automatic cycle callbacks for polling and processing messages.
 ///
 /// Reference: https://docs.rs/wingfoil/0.1.11/wingfoil/trait.MutableNode.html
-impl<F> MutableNode for SummingNode<F>
+impl<T, F> MutableNode for SummingNode<T, F>
 where
+    T: StreamPeekRef<i64> + 'static,
     F: FnMut(SummingNodeOutput) + 'static,
 {
-    /// Called by Wingfoil on each graph cycle to poll for and process messages.
+    /// Called by Wingfoil on each graph cycle to process upstream values.
     ///
-    /// The node polls the Aeron subscriber (non-blocking) and updates its
-    /// running sum for any received i64 values. After processing, it invokes
-    /// the output callback with the current state for test observation.
+    /// The node checks for new values from the upstream node via peek_ref()
+    /// and updates its running sum. After processing, it invokes the output
+    /// callback with the current state for test observation.
     /// Returns false to indicate the node should continue processing.
     fn cycle(&mut self, _state: &mut GraphState) -> bool {
-        // Poll and process any available messages
-        let _ = self.poll_and_process();
+        // Process the latest value from upstream using peek pattern
+        self.process_upstream();
 
         // Invoke callback with current state for test observation
         (self.output_callback)(SummingNodeOutput {
@@ -264,7 +281,37 @@ fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum(
     // Give time for messages to propagate
     thread::sleep(Duration::from_millis(100));
 
-    // Create a callback to collect outputs from the node
+    // Create parser function for i64 messages (little-endian, 8 bytes)
+    let parser = |fragment: &[u8]| -> Option<i64> {
+        if fragment.len() >= 8 {
+            let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
+            Some(i64::from_le_bytes(bytes))
+        } else {
+            None
+        }
+    };
+
+    // Create AeronSubscriberNode - this is the transport layer that polls Aeron
+    // and implements StreamPeekRef<i64> for downstream consumption
+    let aeron_node = AeronSubscriberNode::new(subscriber, parser, 0i64);
+
+    // DUAL-RC PATTERN: We need to share this node in two ways:
+    // 1. As upstream reference (concrete type) for SummingNode to call peek_ref()
+    // 2. As graph node (Rc<dyn Node>) for the graph's heterogeneous vector
+    //
+    // We manually create Rc<RefCell<>> instead of using into_node() because:
+    // - into_node() consumes the value and returns Rc<dyn Node> (type-erased)
+    // - We need to clone BEFORE type erasure to preserve concrete type for peek access
+    let aeron_node_rc: Rc<RefCell<_>> = Rc::new(RefCell::new(aeron_node));
+
+    // Clone the Rc for upstream reference - keeps concrete type for peek_ref()
+    let upstream_ref = aeron_node_rc.clone();
+
+    // Cast to Rc<dyn Node> for graph - type erasure to fit in heterogeneous vector
+    // We can upcast Rc<RefCell<ConcreteNode>> to Rc<dyn Node> because RefCell<T> implements Node
+    let aeron_graph_node: Rc<dyn Node> = aeron_node_rc;
+
+    // Create a callback to collect outputs from the SummingNode
     // This uses Rc<RefCell<>> which is Wingfoil's single-threaded pattern for test observation
     // Reference: https://docs.rs/wingfoil/0.1.11/wingfoil/
     let outputs: Rc<RefCell<Vec<SummingNodeOutput>>> = Rc::new(RefCell::new(Vec::new()));
@@ -275,15 +322,22 @@ fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum(
         outputs_clone.borrow_mut().push(output);
     };
 
-    // Create SummingNode with the callback
-    let summing_node = SummingNode::new(subscriber, output_callback);
+    // Create SummingNode - this is the business logic layer that uses peek_ref()
+    // to access values from the upstream AeronSubscriberNode
+    let summing_node = SummingNode::new(upstream_ref, output_callback);
 
-    // Wrap in RefCell for Wingfoil's interior mutability pattern
-    let node = RefCell::new(summing_node).into_node();
+    // Convert SummingNode to dyn Node using into_node() helper
+    let summing_graph_node = RefCell::new(summing_node).into_node();
 
-    // Create and run Wingfoil graph with the SummingNode
+    // Create and run Wingfoil graph with both nodes:
+    // - AeronSubscriberNode: Polls Aeron and provides values via peek_ref()
+    // - SummingNode: Consumes values via peek_ref() and maintains running sum
     // Run for 10 cycles to poll and process messages
-    let mut graph = Graph::new(vec![node], RunMode::RealTime, RunFor::Cycles(10));
+    let mut graph = Graph::new(
+        vec![aeron_graph_node, summing_graph_node],
+        RunMode::RealTime,
+        RunFor::Cycles(10),
+    );
 
     graph.run().expect("Graph execution failed");
 

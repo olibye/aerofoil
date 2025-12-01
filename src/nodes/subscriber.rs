@@ -1,0 +1,412 @@
+//! Aeron subscriber node for Wingfoil stream processing.
+//!
+//! This module provides [`AeronSubscriberNode`], a Wingfoil node that bridges
+//! Aeron transport with Wingfoil's stream processing framework using Element types.
+
+use crate::transport::{AeronSubscriber, TransportError};
+use wingfoil::{Element, GraphState, MutableNode, StreamPeekRef};
+
+/// A Wingfoil node that polls an Aeron subscriber and implements `StreamPeekRef<T>`.
+///
+/// This node bridges Aeron transport with Wingfoil's stream processing by:
+/// - Polling an [`AeronSubscriber`] for incoming messages (non-blocking)
+/// - Parsing messages using a user-provided parser function
+/// - Storing the latest parsed value for downstream consumption via `peek_ref()`
+///
+/// # Type Parameters
+///
+/// - `T`: The type of values produced by parsing Aeron messages (must implement `Element`)
+/// - `F`: The parser function type, `FnMut(&[u8]) -> Option<T>`
+/// - `S`: The Aeron subscriber implementation
+///
+/// # Element Trait
+///
+/// The message type `T` must implement Wingfoil's `Element` trait, which requires:
+/// `Debug + Clone + Default + 'static`. This ensures:
+/// - `Debug`: For logging and debugging
+/// - `Clone`: For value copying (must be cheap to clone - use `Rc<T>` for large types)
+/// - `Default`: For providing an initial value
+/// - `'static`: No non-static references
+///
+/// This ensures compatibility with Wingfoil's type system and enables use with
+/// standard Wingfoil stream operators.
+///
+/// # Parser Function Contract
+///
+/// The parser function receives a byte slice (`&[u8]`) containing a message fragment
+/// and returns `Option<T>`:
+/// - `Some(value)` - Message was successfully parsed, updates current value
+/// - `None` - Message was invalid/incomplete, current value unchanged
+///
+/// # StreamPeekRef Implementation
+///
+/// This node implements `StreamPeekRef<T>`, allowing downstream nodes to access
+/// the latest parsed value via `peek_ref()`. This follows Wingfoil's idiomatic
+/// pattern for node composition.
+///
+/// # Single-threaded Design
+///
+/// Following Wingfoil's design, this node is designed for single-threaded execution
+/// and uses simple state management without synchronization primitives.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use aerofoil::nodes::AeronSubscriberNode;
+/// use aerofoil::transport::rusteron::RusteronSubscriber;
+/// use std::cell::RefCell;
+/// use std::rc::Rc;
+/// use wingfoil::{Graph, RunMode, RunFor};
+///
+/// // Create a parser for i64 messages (little-endian, 8 bytes)
+/// let parser = |fragment: &[u8]| -> Option<i64> {
+///     if fragment.len() >= 8 {
+///         let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
+///         Some(i64::from_le_bytes(bytes))
+///     } else {
+///         None
+///     }
+/// };
+///
+/// // Create the subscriber node
+/// let subscriber = RusteronSubscriber::new(subscription);
+/// let node = AeronSubscriberNode::new(subscriber, parser, 0);
+///
+/// // Use dual-Rc pattern for graph integration
+/// let node_rc = Rc::new(RefCell::new(node));
+/// let upstream_ref = node_rc.clone();      // For downstream nodes
+/// let graph_node: Rc<dyn Node> = node_rc; // For graph
+///
+/// // Create graph
+/// let mut graph = Graph::new(
+///     vec![graph_node],
+///     RunMode::RealTime,
+///     RunFor::Cycles(100)
+/// );
+///
+/// graph.run().expect("Graph execution failed");
+///
+/// // Downstream nodes can use upstream_ref.borrow().peek_ref()
+/// ```
+pub struct AeronSubscriberNode<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Option<T>,
+    S: AeronSubscriber,
+{
+    /// The Aeron subscriber to poll for messages
+    subscriber: S,
+    /// Parser function to convert byte fragments into typed values
+    parser: F,
+    /// The most recently parsed value (or initial value if no messages received)
+    current_value: T,
+}
+
+impl<T, F, S> AeronSubscriberNode<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Option<T>,
+    S: AeronSubscriber,
+{
+    /// Creates a new `AeronSubscriberNode`.
+    ///
+    /// # Parameters
+    ///
+    /// - `subscriber`: The Aeron subscriber to poll for messages
+    /// - `parser`: Function to parse byte fragments into typed values
+    /// - `initial_value`: The initial value before any messages are received
+    ///
+    /// # Returns
+    ///
+    /// A new `AeronSubscriberNode` instance ready to be added to a Wingfoil graph.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let parser = |fragment: &[u8]| -> Option<i64> {
+    ///     if fragment.len() >= 8 {
+    ///         let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
+    ///         Some(i64::from_le_bytes(bytes))
+    ///     } else {
+    ///         None
+    ///     }
+    /// };
+    ///
+    /// let node = AeronSubscriberNode::new(subscriber, parser, 0);
+    /// ```
+    pub fn new(subscriber: S, parser: F, initial_value: T) -> Self {
+        AeronSubscriberNode {
+            subscriber,
+            parser,
+            current_value: initial_value,
+        }
+    }
+
+    /// Polls the subscriber and processes received messages.
+    ///
+    /// This method is called internally by the `cycle()` implementation.
+    /// It polls the Aeron subscriber (non-blocking) and attempts to parse
+    /// each received fragment. If parsing succeeds, `current_value` is updated.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(count)` - Number of fragments processed
+    /// - `Err(_)` - Transport error occurred during polling
+    fn poll_and_process(&mut self) -> Result<usize, TransportError> {
+        self.subscriber.poll(|fragment| {
+            // Try to parse the fragment using the user-provided parser
+            if let Some(parsed_value) = (self.parser)(fragment) {
+                // Update current value with successfully parsed data
+                self.current_value = parsed_value;
+            }
+            // Continue processing even if this fragment failed to parse
+            Ok(())
+        })
+    }
+}
+
+/// Wingfoil `MutableNode` implementation.
+///
+/// This enables the node to be registered in a Wingfoil graph and receive
+/// automatic cycle callbacks for polling and processing messages.
+impl<T, F, S> MutableNode for AeronSubscriberNode<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Option<T> + 'static,
+    S: AeronSubscriber + 'static,
+{
+    /// Called by Wingfoil on each graph cycle to poll for and process messages.
+    ///
+    /// This method polls the Aeron subscriber (non-blocking) and processes any
+    /// available messages, updating the current value when messages are successfully
+    /// parsed. Returns `false` to indicate the node should continue processing.
+    fn cycle(&mut self, _state: &mut GraphState) -> bool {
+        // Poll and process any available messages
+        // Ignore errors - we continue processing on the next cycle
+        let _ = self.poll_and_process();
+
+        // Return false to indicate we want to continue processing
+        // (the graph will control when to stop based on its run configuration)
+        false
+    }
+
+    /// Register this node to be called on every cycle.
+    ///
+    /// This ensures the node continuously polls for incoming messages
+    /// throughout the graph's execution.
+    fn start(&mut self, state: &mut GraphState) {
+        state.always_callback();
+    }
+}
+
+/// Wingfoil `StreamPeekRef<T>` implementation.
+///
+/// This allows downstream nodes to access the latest parsed value via `peek_ref()`,
+/// enabling Wingfoil's idiomatic node composition pattern.
+impl<T, F, S> StreamPeekRef<T> for AeronSubscriberNode<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Option<T> + 'static,
+    S: AeronSubscriber + 'static,
+{
+    /// Returns a reference to the most recently parsed value.
+    ///
+    /// Downstream nodes can call this method to access the latest value
+    /// produced by this stream. If no messages have been successfully parsed,
+    /// this returns a reference to the initial value provided during construction.
+    fn peek_ref(&self) -> &T {
+        &self.current_value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::{FragmentBuffer, FragmentHeader};
+    use std::cell::RefCell;
+
+    /// Mock subscriber for testing that provides canned message sequences
+    struct MockSubscriber {
+        messages: RefCell<Vec<Vec<u8>>>,
+    }
+
+    impl MockSubscriber {
+        fn new(messages: Vec<Vec<u8>>) -> Self {
+            MockSubscriber {
+                messages: RefCell::new(messages),
+            }
+        }
+    }
+
+    impl AeronSubscriber for MockSubscriber {
+        fn poll<F>(&mut self, mut handler: F) -> Result<usize, TransportError>
+        where
+            F: FnMut(&crate::transport::FragmentBuffer) -> Result<(), TransportError>,
+        {
+            let mut messages = self.messages.borrow_mut();
+            let count = messages.len();
+
+            // Process all available messages
+            for message in messages.drain(..) {
+                // Create a FragmentBuffer with dummy header metadata
+                let header = FragmentHeader {
+                    position: 0,
+                    session_id: 0,
+                    stream_id: 0,
+                };
+                let fragment = FragmentBuffer::new(&message, header);
+                handler(&fragment)?;
+            }
+
+            Ok(count)
+        }
+    }
+
+    /// Test: Given valid i64 messages, when polled, then updates current_value
+    #[test]
+    fn given_valid_messages_when_polled_then_updates_current_value() {
+        // Given: Mock subscriber with two i64 messages (little-endian)
+        let msg1 = 42i64.to_le_bytes().to_vec();
+        let msg2 = 100i64.to_le_bytes().to_vec();
+        let subscriber = MockSubscriber::new(vec![msg1, msg2]);
+
+        // Given: Parser for i64 messages
+        let parser = |fragment: &[u8]| -> Option<i64> {
+            if fragment.len() >= 8 {
+                let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
+                Some(i64::from_le_bytes(bytes))
+            } else {
+                None
+            }
+        };
+
+        // Given: AeronSubscriberNode with initial value 0
+        let mut node = AeronSubscriberNode::new(subscriber, parser, 0);
+
+        // When: Poll and process messages
+        let result = node.poll_and_process();
+
+        // Then: Polling succeeds and processes 2 messages
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 2);
+
+        // Then: Current value is updated to the last message (100)
+        assert_eq!(*node.peek_ref(), 100);
+    }
+
+    /// Test: Given custom Element type, when used with AeronSubscriberNode, then compiles and works
+    #[test]
+    fn given_custom_element_type_when_used_then_works() {
+        #[derive(Debug, Clone, Default, PartialEq)]
+        struct Trade {
+            price: f64,
+            quantity: i64,
+        }
+        // Element is automatically implemented for types that are Debug + Clone + Default + 'static
+
+        // Given: Parser for Trade messages
+        let parser = |fragment: &[u8]| -> Option<Trade> {
+            if fragment.len() >= 16 {
+                let price = f64::from_le_bytes(fragment[0..8].try_into().ok()?);
+                let quantity = i64::from_le_bytes(fragment[8..16].try_into().ok()?);
+                Some(Trade { price, quantity })
+            } else {
+                None
+            }
+        };
+
+        // Given: Mock subscriber with Trade message
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&123.45f64.to_le_bytes());
+        msg.extend_from_slice(&100i64.to_le_bytes());
+        let subscriber = MockSubscriber::new(vec![msg]);
+
+        // When: Create node with Element type
+        let mut node = AeronSubscriberNode::new(subscriber, parser, Trade::default());
+
+        // Then: Compiles successfully and parses correctly
+        node.poll_and_process().unwrap();
+        assert_eq!(node.peek_ref().price, 123.45);
+        assert_eq!(node.peek_ref().quantity, 100);
+    }
+
+    /// Test: Given peek_ref when called then returns latest parsed value
+    #[test]
+    fn given_peek_ref_when_called_then_returns_latest_parsed_value() {
+        // Given: Mock subscriber with one i64 message
+        let msg = 999i64.to_le_bytes().to_vec();
+        let subscriber = MockSubscriber::new(vec![msg]);
+
+        let parser = |fragment: &[u8]| -> Option<i64> {
+            if fragment.len() >= 8 {
+                let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
+                Some(i64::from_le_bytes(bytes))
+            } else {
+                None
+            }
+        };
+
+        let mut node = AeronSubscriberNode::new(subscriber, parser, 0);
+
+        // When: Poll and process messages
+        node.poll_and_process().unwrap();
+
+        // Then: peek_ref returns the parsed value
+        assert_eq!(*node.peek_ref(), 999);
+    }
+
+    /// Test: Given invalid messages when polled then keeps previous value
+    #[test]
+    fn given_invalid_messages_when_polled_then_keeps_previous_value() {
+        // Given: Mock subscriber with invalid short message (only 4 bytes, need 8)
+        let invalid_msg = vec![1, 2, 3, 4];
+        let subscriber = MockSubscriber::new(vec![invalid_msg]);
+
+        let parser = |fragment: &[u8]| -> Option<i64> {
+            if fragment.len() >= 8 {
+                let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
+                Some(i64::from_le_bytes(bytes))
+            } else {
+                None
+            }
+        };
+
+        // Given: Initial value of 42
+        let mut node = AeronSubscriberNode::new(subscriber, parser, 42);
+
+        // When: Poll and process invalid message
+        node.poll_and_process().unwrap();
+
+        // Then: Current value remains at initial value (42)
+        assert_eq!(*node.peek_ref(), 42);
+    }
+
+    /// Test: Given no messages when polled then keeps previous value
+    #[test]
+    fn given_no_messages_when_polled_then_keeps_previous_value() {
+        // Given: Mock subscriber with no messages
+        let subscriber = MockSubscriber::new(vec![]);
+
+        let parser = |fragment: &[u8]| -> Option<i64> {
+            if fragment.len() >= 8 {
+                let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
+                Some(i64::from_le_bytes(bytes))
+            } else {
+                None
+            }
+        };
+
+        // Given: Initial value of 123
+        let mut node = AeronSubscriberNode::new(subscriber, parser, 123);
+
+        // When: Poll with no messages available
+        let result = node.poll_and_process();
+
+        // Then: Polling succeeds with 0 messages processed
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+
+        // Then: Current value remains at initial value (123)
+        assert_eq!(*node.peek_ref(), 123);
+    }
+}

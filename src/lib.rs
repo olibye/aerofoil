@@ -13,5 +13,7 @@
 //! The library is organized into:
 //!
 //! - [`transport`]: Trait-based transport abstractions and Aeron client adapters
+//! - [`nodes`]: Wingfoil node implementations for Aeron integration
 
+pub mod nodes;
 pub mod transport;

@@ -65,7 +65,10 @@ impl AeronSubscriber for RusteronSubscriber {
         // Rusteron returns Result<i32, AeronCError>
         match count_result {
             Ok(count) => Ok(count as usize),
-            Err(e) => Err(TransportError::Backend(format!("Rusteron poll error: {:?}", e))),
+            Err(e) => Err(TransportError::Backend(format!(
+                "Rusteron poll error: {:?}",
+                e
+            ))),
         }
     }
 }
