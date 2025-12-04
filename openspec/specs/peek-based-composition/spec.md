@@ -2,13 +2,13 @@
 
 ## Purpose
 
-This specification defines the peek-based node composition pattern for Aerofoil, which enables clean separation between transport layer nodes (e.g., AeronSubscriberNode) and business logic nodes (e.g., SummingNode) using Wingfoil's StreamPeekRef trait. The pattern allows downstream nodes to access upstream values via peek_ref() while maintaining proper ownership semantics through the dual-Rc pattern for graph integration.
+This specification defines the peek-based node composition pattern for Aerofoil, which enables clean separation between transport layer nodes (e.g., AeronSubscriberValueRefNode) and business logic nodes (e.g., SummingNode) using Wingfoil's StreamPeekRef trait. The pattern allows downstream nodes to access upstream values via peek_ref() while maintaining proper ownership semantics through the dual-Rc pattern for graph integration.
 ## Requirements
-### Requirement: AeronSubscriberNode Element Type Constraint
+### Requirement: AeronSubscriberValueRefNode Element Type Constraint
 
-AeronSubscriberNode SHALL use Wingfoil's Element trait bound for message types to ensure compatibility with Wingfoil's type system and enable Debug, Clone, Default, and 'static guarantees.
+AeronSubscriberValueRefNode SHALL use Wingfoil's Element trait bound for message types to ensure compatibility with Wingfoil's type system and enable Debug, Clone, Default, and 'static guarantees.
 
-#### Scenario: Given AeronSubscriberNode when created with Element type then compiles successfully
+#### Scenario: Given AeronSubscriberValueRefNode when created with Element type then compiles successfully
 
 ```rust
 use wingfoil::types::Element;
@@ -26,11 +26,11 @@ let parser = |fragment: &[u8]| -> Option<Trade> {
     Some(Trade::default())
 };
 
-let node = AeronSubscriberNode::new(subscriber, parser, Trade::default());
+let node = AeronSubscriberValueRefNode::new(subscriber, parser, Trade::default());
 // Should compile because Trade: Element
 ```
 
-#### Scenario: Given AeronSubscriberNode when created with i64 then works with primitive Element types
+#### Scenario: Given AeronSubscriberValueRefNode when created with i64 then works with primitive Element types
 
 ```rust
 // i64 implements Element (Debug + Clone + Default + 'static)
@@ -42,7 +42,7 @@ let parser = |fragment: &[u8]| -> Option<i64> {
     }
 };
 
-let node = AeronSubscriberNode::new(subscriber, parser, 0i64);
+let node = AeronSubscriberValueRefNode::new(subscriber, parser, 0i64);
 // Should compile because i64: Element
 ```
 
@@ -67,7 +67,7 @@ where
 }
 
 // Given: Create upstream subscriber node
-let subscriber_node = AeronSubscriberNode::new(subscriber, parser, 0);
+let subscriber_node = AeronSubscriberValueRefNode::new(subscriber, parser, 0);
 let subscriber_rc = Rc::new(RefCell::new(subscriber_node));
 
 // When: Create downstream node with upstream reference
@@ -109,7 +109,7 @@ Wingfoil graphs SHALL support nodes that are both in the graph and referenced by
 
 ```rust
 // Given: Create node that will be in graph AND referenced by downstream node
-let subscriber_node = AeronSubscriberNode::new(subscriber, parser, 0);
+let subscriber_node = AeronSubscriberValueRefNode::new(subscriber, parser, 0);
 
 // Create Rc<RefCell<>> manually (don't use into_node() yet)
 let subscriber_rc = Rc::new(RefCell::new(subscriber_node));
@@ -138,7 +138,7 @@ graph.run().expect("Graph execution should succeed");
 
 ### Requirement: Integration Test Demonstrates Peek Pattern
 
-The summing_node_test integration test SHALL demonstrate the peek-based composition pattern with AeronSubscriberNode and SummingNode to serve as reference implementation for users.
+The summing_node_test integration test SHALL demonstrate the peek-based composition pattern with AeronSubscriberValueRefNode and SummingNode to serve as reference implementation for users.
 
 #### Scenario: Given integration test when run then demonstrates complete peek-based flow
 
@@ -155,7 +155,7 @@ fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum(
         publication.offer(&value.to_le_bytes()).expect("Offer");
     }
 
-    // When: Create AeronSubscriberNode (transport layer)
+    // When: Create AeronSubscriberValueRefNode (transport layer)
     let parser = |fragment: &[u8]| -> Option<i64> {
         if fragment.len() >= 8 {
             Some(i64::from_le_bytes(fragment[0..8].try_into().ok()?))
@@ -163,7 +163,7 @@ fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum(
             None
         }
     };
-    let subscriber_node = AeronSubscriberNode::new(
+    let subscriber_node = AeronSubscriberValueRefNode::new(
         RusteronSubscriber::new(subscription),
         parser,
         0

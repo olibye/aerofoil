@@ -1,6 +1,6 @@
 //! Aeron subscriber node for Wingfoil stream processing.
 //!
-//! This module provides [`AeronSubscriberNode`] and [`AeronSubscriberValueNode`],
+//! This module provides [`AeronSubscriberValueRefNode`] and [`AeronSubscriberValueNode`],
 //! Wingfoil nodes that bridge Aeron transport with Wingfoil's stream processing
 //! framework using Element types.
 
@@ -9,7 +9,7 @@ use wingfoil::{Element, GraphState, MutableNode, StreamPeekRef};
 
 /// Internal shared implementation for Aeron subscriber nodes.
 ///
-/// This struct contains the common state and logic used by both [`AeronSubscriberNode`]
+/// This struct contains the common state and logic used by both [`AeronSubscriberValueRefNode`]
 /// and [`AeronSubscriberValueNode`]. It is not part of the public API - users should
 /// use one of the public node types instead.
 struct AeronSubscriberCore<T, F, S>
@@ -97,7 +97,7 @@ where
 /// # Example
 ///
 /// ```rust,ignore
-/// use aerofoil::nodes::AeronSubscriberNode;
+/// use aerofoil::nodes::AeronSubscriberValueRefNode;
 /// use aerofoil::transport::rusteron::RusteronSubscriber;
 /// use std::cell::RefCell;
 /// use std::rc::Rc;
@@ -115,7 +115,7 @@ where
 ///
 /// // Create the subscriber node
 /// let subscriber = RusteronSubscriber::new(subscription);
-/// let node = AeronSubscriberNode::new(subscriber, parser, 0);
+/// let node = AeronSubscriberValueRefNode::new(subscriber, parser, 0);
 ///
 /// // Use dual-Rc pattern for graph integration
 /// let node_rc = Rc::new(RefCell::new(node));
@@ -133,7 +133,7 @@ where
 ///
 /// // Downstream nodes can use upstream_ref.borrow().peek_ref()
 /// ```
-pub struct AeronSubscriberNode<T, F, S>
+pub struct AeronSubscriberValueRefNode<T, F, S>
 where
     T: Element,
     F: FnMut(&[u8]) -> Option<T>,
@@ -142,13 +142,13 @@ where
     core: AeronSubscriberCore<T, F, S>,
 }
 
-impl<T, F, S> AeronSubscriberNode<T, F, S>
+impl<T, F, S> AeronSubscriberValueRefNode<T, F, S>
 where
     T: Element,
     F: FnMut(&[u8]) -> Option<T>,
     S: AeronSubscriber,
 {
-    /// Creates a new `AeronSubscriberNode`.
+    /// Creates a new `AeronSubscriberValueRefNode`.
     ///
     /// # Parameters
     ///
@@ -158,7 +158,7 @@ where
     ///
     /// # Returns
     ///
-    /// A new `AeronSubscriberNode` instance ready to be added to a Wingfoil graph.
+    /// A new `AeronSubscriberValueRefNode` instance ready to be added to a Wingfoil graph.
     ///
     /// # Example
     ///
@@ -172,7 +172,7 @@ where
     ///     }
     /// };
     ///
-    /// let node = AeronSubscriberNode::new(subscriber, parser, 0);
+    /// let node = AeronSubscriberValueRefNode::new(subscriber, parser, 0);
     /// ```
     pub fn new(subscriber: S, parser: F, initial_value: T) -> Self {
         Self {
@@ -185,7 +185,7 @@ where
 ///
 /// This enables the node to be registered in a Wingfoil graph and receive
 /// automatic cycle callbacks for polling and processing messages.
-impl<T, F, S> MutableNode for AeronSubscriberNode<T, F, S>
+impl<T, F, S> MutableNode for AeronSubscriberValueRefNode<T, F, S>
 where
     T: Element,
     F: FnMut(&[u8]) -> Option<T> + 'static,
@@ -219,7 +219,7 @@ where
 ///
 /// This allows downstream nodes to access the latest parsed value via `peek_ref()`,
 /// enabling Wingfoil's idiomatic node composition pattern.
-impl<T, F, S> StreamPeekRef<T> for AeronSubscriberNode<T, F, S>
+impl<T, F, S> StreamPeekRef<T> for AeronSubscriberValueRefNode<T, F, S>
 where
     T: Element,
     F: FnMut(&[u8]) -> Option<T> + 'static,
@@ -238,7 +238,7 @@ where
 /// A Wingfoil node that polls an Aeron subscriber and implements `StreamPeek<T>`.
 ///
 /// This node provides value-based access for cheap-to-clone types, complementing
-/// [`AeronSubscriberNode`] which uses reference-based access. This node bridges
+/// [`AeronSubscriberValueRefNode`] which uses reference-based access. This node bridges
 /// Aeron transport with Wingfoil's stream processing by:
 /// - Polling an [`AeronSubscriber`] for incoming messages (non-blocking)
 /// - Parsing messages using a user-provided parser function
@@ -255,7 +255,7 @@ where
 /// The message type `T` must implement Wingfoil's `Element` trait, which requires:
 /// `Debug + Clone + Default + 'static`. This ensures:
 /// - `Debug`: For logging and debugging
-/// - `Clone`: For value copying (must be cheap to clone - use `AeronSubscriberNode` for large types)
+/// - `Clone`: For value copying (must be cheap to clone - use `AeronSubscriberValueRefNode` for large types)
 /// - `Default`: For providing an initial value
 /// - `'static`: No non-static references
 ///
@@ -273,7 +273,7 @@ where
 ///   - Small structs (<= 128 bytes)
 ///   - When code clarity is prioritized
 ///
-/// - **Use `AeronSubscriberNode`** for:
+/// - **Use `AeronSubscriberValueRefNode`** for:
 ///   - Large types (> 128 bytes)
 ///   - `Rc<T>` wrapped types
 ///   - Zero-copy patterns
@@ -473,8 +473,8 @@ mod tests {
             }
         };
 
-        // Given: AeronSubscriberNode with initial value 0
-        let mut node = AeronSubscriberNode::new(subscriber, parser, 0);
+        // Given: AeronSubscriberValueRefNode with initial value 0
+        let mut node = AeronSubscriberValueRefNode::new(subscriber, parser, 0);
 
         // When: Poll and process messages
         let result = node.core.poll_and_process();
@@ -487,7 +487,7 @@ mod tests {
         assert_eq!(*node.peek_ref(), 100);
     }
 
-    /// Test: Given custom Element type, when used with AeronSubscriberNode, then compiles and works
+    /// Test: Given custom Element type, when used with AeronSubscriberValueRefNode, then compiles and works
     #[test]
     fn given_custom_element_type_when_used_then_works() {
         #[derive(Debug, Clone, Default, PartialEq)]
@@ -515,7 +515,7 @@ mod tests {
         let subscriber = MockSubscriber::new(vec![msg]);
 
         // When: Create node with Element type
-        let mut node = AeronSubscriberNode::new(subscriber, parser, Trade::default());
+        let mut node = AeronSubscriberValueRefNode::new(subscriber, parser, Trade::default());
 
         // Then: Compiles successfully and parses correctly
         node.core.poll_and_process().unwrap();
@@ -539,7 +539,7 @@ mod tests {
             }
         };
 
-        let mut node = AeronSubscriberNode::new(subscriber, parser, 0);
+        let mut node = AeronSubscriberValueRefNode::new(subscriber, parser, 0);
 
         // When: Poll and process messages
         node.core.poll_and_process().unwrap();
@@ -565,7 +565,7 @@ mod tests {
         };
 
         // Given: Initial value of 42
-        let mut node = AeronSubscriberNode::new(subscriber, parser, 42);
+        let mut node = AeronSubscriberValueRefNode::new(subscriber, parser, 42);
 
         // When: Poll and process invalid message
         node.core.poll_and_process().unwrap();
@@ -590,7 +590,7 @@ mod tests {
         };
 
         // Given: Initial value of 123
-        let mut node = AeronSubscriberNode::new(subscriber, parser, 123);
+        let mut node = AeronSubscriberValueRefNode::new(subscriber, parser, 123);
 
         // When: Poll with no messages available
         let result = node.core.poll_and_process();

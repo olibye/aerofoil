@@ -1,13 +1,13 @@
 //! Integration test demonstrating peek-based node composition with Wingfoil and Aeron.
 //!
 //! This test demonstrates the proper Wingfoil node composition pattern:
-//! - **AeronSubscriberNode**: Transport layer that polls Aeron and implements StreamPeekRef<i64>
+//! - **AeronSubscriberValueRefNode**: Transport layer that polls Aeron and implements StreamPeekRef<i64>
 //! - **SummingNode**: Business logic layer that uses peek() to access upstream values
 //! - **Dual-Rc Pattern**: Sharing nodes between graph and upstream references
 //!
 //! # Key Patterns Demonstrated
 //!
-//! - **Separation of Concerns**: Transport (AeronSubscriberNode) separate from logic (SummingNode)
+//! - **Separation of Concerns**: Transport (AeronSubscriberValueRefNode) separate from logic (SummingNode)
 //! - **Peek-Based Composition**: Downstream nodes use `peek_ref()` to access upstream values
 //! - **Element Types**: Using Wingfoil's Element trait (Debug + Clone + Default + 'static)
 //! - **Dual-Rc Pattern**: Manual Rc<RefCell<>> management for graph integration
@@ -38,7 +38,7 @@
 
 mod common;
 
-use aerofoil::nodes::AeronSubscriberNode;
+use aerofoil::nodes::AeronSubscriberValueRefNode;
 use aerofoil::transport::rusteron::{RusteronPublisher, RusteronSubscriber};
 use aerofoil::transport::AeronPublisher;
 use common::{MediaDriverGuard, SummingNode, SummingNodeOutput};
@@ -117,9 +117,9 @@ fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum(
         }
     };
 
-    // Create AeronSubscriberNode - this is the transport layer that polls Aeron
+    // Create AeronSubscriberValueRefNode - this is the transport layer that polls Aeron
     // and implements StreamPeekRef<i64> for downstream consumption
-    let aeron_node = AeronSubscriberNode::new(subscriber, parser, 0i64);
+    let aeron_node = AeronSubscriberValueRefNode::new(subscriber, parser, 0i64);
 
     // DUAL-RC PATTERN: We need to share this node in two ways:
     // 1. As upstream reference (concrete type) for SummingNode to call peek_ref()
@@ -149,14 +149,14 @@ fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum(
     };
 
     // Create SummingNode - this is the business logic layer that uses peek_ref()
-    // to access values from the upstream AeronSubscriberNode
+    // to access values from the upstream AeronSubscriberValueRefNode
     let summing_node = SummingNode::new(upstream_ref, output_callback);
 
     // Convert SummingNode to dyn Node using into_node() helper
     let summing_graph_node = RefCell::new(summing_node).into_node();
 
     // Create and run Wingfoil graph with both nodes:
-    // - AeronSubscriberNode: Polls Aeron and provides values via peek_ref()
+    // - AeronSubscriberValueRefNode: Polls Aeron and provides values via peek_ref()
     // - SummingNode: Consumes values via peek_ref() and maintains running sum
     // Run for 10 cycles to poll and process messages
     let mut graph = Graph::new(

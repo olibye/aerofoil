@@ -8,7 +8,7 @@
 //!
 //! This module provides two Aeron subscriber node types with different access patterns:
 //!
-//! ## AeronSubscriberNode<T> - Reference Access
+//! ## AeronSubscriberValueRefNode<T> - Reference Access
 //!
 //! Implements [`StreamPeekRef<T>`](wingfoil::StreamPeekRef) for reference-based access.
 //!
@@ -40,7 +40,7 @@
 //!
 //! ## Comparison Table
 //!
-//! | Aspect | AeronSubscriberNode | AeronSubscriberValueNode |
+//! | Aspect | AeronSubscriberValueRefNode | AeronSubscriberValueNode |
 //! |--------|---------------------|--------------------------|
 //! | Trait | `StreamPeekRef<T>` | `StreamPeek<T>` |
 //! | Access | `upstream.borrow().peek_ref()` | `upstream.peek_value()` |
@@ -52,7 +52,7 @@
 //!
 //! Wingfoil nodes compose using peek traits:
 //!
-//! 1. **Transport nodes** (like [`AeronSubscriberNode`] or [`AeronSubscriberValueNode`]) poll external sources
+//! 1. **Transport nodes** (like [`AeronSubscriberValueRefNode`] or [`AeronSubscriberValueNode`]) poll external sources
 //! 2. **Business logic nodes** accept upstream dependencies using the appropriate trait
 //! 3. **Data access** uses either `peek_ref()` or `peek_value()` to read the latest value
 //!
@@ -72,7 +72,7 @@
 //! use wingfoil::Node;
 //!
 //! // Create node
-//! let subscriber_node = AeronSubscriberNode::new(subscriber, parser, 0i64);
+//! let subscriber_node = AeronSubscriberValueRefNode::new(subscriber, parser, 0i64);
 //!
 //! // Wrap in Rc<RefCell<>> manually (don't use into_node() yet)
 //! let subscriber_rc = Rc::new(RefCell::new(subscriber_node));
@@ -104,4 +104,4 @@
 
 mod subscriber;
 
-pub use subscriber::{AeronSubscriberNode, AeronSubscriberValueNode};
+pub use subscriber::{AeronSubscriberValueNode, AeronSubscriberValueRefNode};

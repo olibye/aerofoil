@@ -2,7 +2,7 @@
 
 ## Phase 1: Create Example Files
 
-- [ ] Create `examples/subscriber_node_reference_access.rs` demonstrating AeronSubscriberNode with StreamPeekRef pattern
+- [ ] Create `examples/subscriber_node_reference_access.rs` demonstrating AeronSubscriberValueRefNode with StreamPeekRef pattern
 - [ ] Create `examples/subscriber_node_value_access.rs` demonstrating AeronSubscriberValueNode with StreamPeek pattern
 - [ ] Create `examples/counting_node_composition.rs` showing complete counting node integration with Aeron
 - [ ] Create `examples/summing_node_composition.rs` showing complete summing node integration with Aeron
@@ -12,7 +12,7 @@
 ## Phase 2: Update Documentation References
 
 - [ ] Update `src/nodes/mod.rs` module doc comments to reference example files instead of embedding code
-- [ ] Update `src/nodes/subscriber.rs` doc comments for `AeronSubscriberNode` to reference examples
+- [ ] Update `src/nodes/subscriber.rs` doc comments for `AeronSubscriberValueRefNode` to reference examples
 - [ ] Update `src/nodes/subscriber.rs` doc comments for `AeronSubscriberValueNode` to reference examples
 - [ ] Update `tests/common/mod.rs` doc comments to reference examples instead of embedding code
 - [ ] Update `tests/counting_node_value_test.rs` module comments to reference examples and remove embedded code

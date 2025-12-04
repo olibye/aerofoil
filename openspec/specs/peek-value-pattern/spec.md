@@ -5,7 +5,7 @@ TBD - created by archiving change add-stream-peek-value-strategy. Update Purpose
 ## Requirements
 ### Requirement: AeronSubscriberValueNode Implementation
 
-Aerofoil SHALL provide `AeronSubscriberValueNode<T, F, S>` that implements `StreamPeek<T>` for value-based access to cheap-to-clone types, alongside the existing `AeronSubscriberNode<T, F, S>` that implements `StreamPeekRef<T>` for reference-based access.
+Aerofoil SHALL provide `AeronSubscriberValueNode<T, F, S>` that implements `StreamPeek<T>` for value-based access to cheap-to-clone types, alongside the existing `AeronSubscriberValueRefNode<T, F, S>` that implements `StreamPeekRef<T>` for reference-based access.
 
 > **Related**: Complements `peek-based-composition` spec by adding value-access strategy
 
@@ -52,7 +52,7 @@ assert_eq!(value, 42);
 
 ### Requirement: Shared Core Implementation
 
-Both `AeronSubscriberNode` and `AeronSubscriberValueNode` SHALL share core polling and parsing logic via a private `AeronSubscriberCore<T, F, S>` struct to avoid code duplication, differing only in their stream access trait implementations.
+Both `AeronSubscriberValueRefNode` and `AeronSubscriberValueNode` SHALL share core polling and parsing logic via a private `AeronSubscriberCore<T, F, S>` struct to avoid code duplication, differing only in their stream access trait implementations.
 
 #### Scenario: Given both node types when implemented then share common core struct
 
@@ -94,7 +94,7 @@ where
 }
 
 // Public nodes wrap the core
-pub struct AeronSubscriberNode<T, F, S>
+pub struct AeronSubscriberValueRefNode<T, F, S>
 where
     T: Element,
     F: FnMut(&[u8]) -> Option<T>,
@@ -103,13 +103,13 @@ where
     core: AeronSubscriberCore<T, F, S>,
 }
 
-impl<T, F, S> AeronSubscriberNode<T, F, S> {
+impl<T, F, S> AeronSubscriberValueRefNode<T, F, S> {
     pub fn new(subscriber: S, parser: F, initial_value: T) -> Self {
         Self { core: AeronSubscriberCore::new(subscriber, parser, initial_value) }
     }
 }
 
-impl<T, F, S> MutableNode for AeronSubscriberNode<T, F, S>
+impl<T, F, S> MutableNode for AeronSubscriberValueRefNode<T, F, S>
 where
     T: Element,
     F: FnMut(&[u8]) -> Option<T> + 'static,
@@ -125,7 +125,7 @@ where
     }
 }
 
-impl<T, F, S> StreamPeekRef<T> for AeronSubscriberNode<T, F, S> {
+impl<T, F, S> StreamPeekRef<T> for AeronSubscriberValueRefNode<T, F, S> {
     fn peek_ref(&self) -> &T {
         self.core.current_value()
     }
@@ -211,7 +211,7 @@ impl MutableNode for CountingNode {
 #### Scenario: Given downstream node when comparing access patterns then value pattern is cleaner for primitives
 
 ```rust
-// Reference pattern (AeronSubscriberNode)
+// Reference pattern (AeronSubscriberValueRefNode)
 struct RefCountingNode<T: StreamPeekRef<i64>> {
     upstream: Rc<RefCell<T>>,
 }
@@ -327,14 +327,14 @@ fn given_aeron_messages_when_value_node_processes_then_counts_correctly() {
 
 ### Requirement: Documentation Distinguishes Node Types
 
-Module documentation SHALL clearly explain the difference between `AeronSubscriberNode` (reference-access) and `AeronSubscriberValueNode` (value-access) with guidance on when to use each.
+Module documentation SHALL clearly explain the difference between `AeronSubscriberValueRefNode` (reference-access) and `AeronSubscriberValueNode` (value-access) with guidance on when to use each.
 
 #### Scenario: Given module documentation when developers choose node type then clear guidance is provided
 
 ```rust
 //! # Choosing Between Node Types
 //!
-//! ## AeronSubscriberNode<T> - Reference Access
+//! ## AeronSubscriberValueRefNode<T> - Reference Access
 //!
 //! Implements [`StreamPeekRef<T>`](wingfoil::StreamPeekRef) for reference-based access.
 //!
@@ -366,7 +366,7 @@ Module documentation SHALL clearly explain the difference between `AeronSubscrib
 //!
 //! ## Comparison Table
 //!
-//! | Aspect | AeronSubscriberNode | AeronSubscriberValueNode |
+//! | Aspect | AeronSubscriberValueRefNode | AeronSubscriberValueNode |
 //! |--------|---------------------|--------------------------|
 //! | Trait | `StreamPeekRef<T>` | `StreamPeek<T>` |
 //! | Access | `upstream.borrow().peek_ref()` | `upstream.peek_value()` |
@@ -377,7 +377,7 @@ Module documentation SHALL clearly explain the difference between `AeronSubscrib
 
 ### Requirement: Choice Between Access Patterns
 
-Downstream nodes SHALL be able to choose between reference-based access using `StreamPeekRef<T>` with `AeronSubscriberNode` or value-based access using `StreamPeek<T>` with `AeronSubscriberValueNode`, selecting the appropriate pattern based on type characteristics.
+Downstream nodes SHALL be able to choose between reference-based access using `StreamPeekRef<T>` with `AeronSubscriberValueRefNode` or value-based access using `StreamPeek<T>` with `AeronSubscriberValueNode`, selecting the appropriate pattern based on type characteristics.
 
 #### Scenario: Given developer choosing node type when type is primitive then uses AeronSubscriberValueNode
 
@@ -400,7 +400,7 @@ impl MyNode {
 }
 ```
 
-#### Scenario: Given developer choosing node type when type is large then uses AeronSubscriberNode
+#### Scenario: Given developer choosing node type when type is large then uses AeronSubscriberValueRefNode
 
 ```rust
 // For large types: use reference-access pattern
@@ -412,7 +412,7 @@ struct LargeMarketData {
 }
 
 let parser = |fragment: &[u8]| -> Option<Rc<LargeMarketData>> { /* ... */ };
-let node = AeronSubscriberNode::new(subscriber, parser, Rc::new(LargeMarketData::default()));
+let node = AeronSubscriberValueRefNode::new(subscriber, parser, Rc::new(LargeMarketData::default()));
 let node_rc = Rc::new(RefCell::new(node));
 
 // Downstream uses peek_ref()
