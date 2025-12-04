@@ -1,7 +1,8 @@
-# StreamPeek Value Pattern Specification
+# peek-value-pattern Specification
 
-## ADDED Requirements
-
+## Purpose
+TBD - created by archiving change add-stream-peek-value-strategy. Update Purpose after archive.
+## Requirements
 ### Requirement: AeronSubscriberValueNode Implementation
 
 Aerofoil SHALL provide `AeronSubscriberValueNode<T, F, S>` that implements `StreamPeek<T>` for value-based access to cheap-to-clone types, alongside the existing `AeronSubscriberNode<T, F, S>` that implements `StreamPeekRef<T>` for reference-based access.
@@ -374,13 +375,9 @@ Module documentation SHALL clearly explain the difference between `AeronSubscrib
 //! | Cloning | Explicit via `*ref` | Implicit in return |
 ```
 
-## MODIFIED Requirements
-
-### Requirement: Peek-Based Downstream Node Pattern
+### Requirement: Choice Between Access Patterns
 
 Downstream nodes SHALL be able to choose between reference-based access using `StreamPeekRef<T>` with `AeronSubscriberNode` or value-based access using `StreamPeek<T>` with `AeronSubscriberValueNode`, selecting the appropriate pattern based on type characteristics.
-
-> **Modifies**: `peek-based-composition` spec - extends the Peek-Based Downstream Node Pattern requirement to include value-access strategy
 
 #### Scenario: Given developer choosing node type when type is primitive then uses AeronSubscriberValueNode
 
@@ -430,3 +427,4 @@ impl<T: StreamPeekRef<Rc<LargeMarketData>>> MarketProcessor<T> {
     }
 }
 ```
+
