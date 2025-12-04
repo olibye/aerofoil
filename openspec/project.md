@@ -92,7 +92,8 @@ Rust library providing wingfoil aeron adapters
 
 ### Examples Strategy
 - Use idiomatic Rust cargo examples in `examples/` directory at project root
-- NEVER put example code in modules - use `examples/*.rs` files
+- NEVER put example code in comments - use `examples/*.rs` files.
+- Create openspec tasks to check verify that code and function comments do not include rust code.
 - Examples should demonstrate real-world usage patterns
 - Each example should be runnable via `cargo run --example <name>`
 - Keep examples focused on single use cases
