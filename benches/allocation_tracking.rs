@@ -179,69 +179,100 @@ mod rusteron_bench {
     }
 }
 
-#[cfg(feature = "aeron-rs")]
+#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
 mod aeron_rs_bench {
     use super::*;
-    use aerofoil::transport::aeron_rs::{AeronRsPublisher, AeronRsSubscriber};
-    use aerofoil::transport::{AeronPublisher, AeronSubscriber};
-    use aeron_rs::client::Client;
+    use aeron_rs::aeron::Aeron;
+    use aeron_rs::concurrent::atomic_buffer::AtomicBuffer;
     use aeron_rs::context::Context;
+    use aeron_rs::publication::Publication;
+    use aeron_rs::subscription::Subscription;
+    use common::MediaDriverGuard;
+    use std::ffi::CString;
+    use std::sync::{Arc, Mutex};
 
-    /// Benchmark publication hot path allocations for aeron-rs.
+    fn setup_pub_sub(
+        aeron: &mut Aeron,
+        stream_id: i32,
+    ) -> Option<(Arc<Mutex<Publication>>, Arc<Mutex<Subscription>>)> {
+        let channel = CString::new(CHANNEL).expect("Invalid channel");
+
+        let pub_reg_id = match aeron.add_publication(channel.clone(), stream_id) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("Failed to add publication: {:?}", e);
+                return None;
+            }
+        };
+
+        let sub_reg_id = match aeron.add_subscription(channel, stream_id) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("Failed to add subscription: {:?}", e);
+                return None;
+            }
+        };
+
+        let publication = loop {
+            match aeron.find_publication(pub_reg_id) {
+                Ok(pub_arc) => break pub_arc,
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        };
+
+        let subscription = loop {
+            match aeron.find_subscription(sub_reg_id) {
+                Ok(sub_arc) => break sub_arc,
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        };
+
+        thread::sleep(Duration::from_millis(100));
+
+        Some((publication, subscription))
+    }
+
+    /// Benchmark publication hot path allocations.
     pub fn bench_publication_allocations(c: &mut Criterion) {
+        let _driver = match MediaDriverGuard::start() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Skipping benchmark: {}", e);
+                return;
+            }
+        };
+
         let context = Context::new();
-        let mut client = Client::connect(context).expect("Failed to connect to media driver");
+        let mut aeron = match Aeron::new(context) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!(
+                    "Failed to connect to Aeron media driver: {:?}\n\
+                     Ensure an external media driver is running:\n\
+                     java -cp aeron-all.jar io.aeron.driver.MediaDriver",
+                    e
+                );
+                return;
+            }
+        };
 
         let mut group = c.benchmark_group("aeron-rs/allocations/publication");
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let stream_id = 15001 + size.bytes() as i32;
+            let stream_id = 11001 + size.bytes() as i32;
 
-            let publication = client
-                .add_publication(CHANNEL, stream_id)
-                .expect("Failed to add publication");
-
-            let mut publisher = AeronRsPublisher::new(publication);
-
-            thread::sleep(Duration::from_millis(100));
-
-            let buffer = size.create_buffer();
-
-            group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
-                b.iter(|| {
-                    let _ = publisher.offer(&buffer);
-                });
-            });
-        }
-
-        group.finish();
-    }
-
-    /// Benchmark publication hot path allocations with mutable buffer for aeron-rs.
-    ///
-    /// This is particularly important for aeron-rs since offer_mut avoids
-    /// the internal copy that offer requires.
-    pub fn bench_publication_mut_allocations(c: &mut Criterion) {
-        let context = Context::new();
-        let mut client = Client::connect(context).expect("Failed to connect to media driver");
-
-        let mut group = c.benchmark_group("aeron-rs/allocations/publication_mut");
-
-        for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let stream_id = 16001 + size.bytes() as i32;
-
-            let publication = client
-                .add_publication(CHANNEL, stream_id)
-                .expect("Failed to add publication");
-
-            let mut publisher = AeronRsPublisher::new(publication);
-
-            thread::sleep(Duration::from_millis(100));
+            let (publication, _subscription) = match setup_pub_sub(&mut aeron, stream_id) {
+                Some(s) => s,
+                None => return,
+            };
 
             group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
                 let mut buffer = size.create_buffer();
+
                 b.iter(|| {
-                    let _ = publisher.offer_mut(&mut buffer);
+                    let atomic_buffer = AtomicBuffer::wrap_slice(&mut buffer);
+                    let pub_guard = publication.lock().expect("Publication mutex poisoned");
+                    let _ = pub_guard.offer(atomic_buffer);
                 });
             });
         }
@@ -249,38 +280,53 @@ mod aeron_rs_bench {
         group.finish();
     }
 
-    /// Benchmark subscription hot path allocations for aeron-rs.
+    /// Benchmark subscription hot path allocations.
     pub fn bench_subscription_allocations(c: &mut Criterion) {
+        let _driver = match MediaDriverGuard::start() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Skipping benchmark: {}", e);
+                return;
+            }
+        };
+
         let context = Context::new();
-        let mut client = Client::connect(context).expect("Failed to connect to media driver");
+        let mut aeron = match Aeron::new(context) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!(
+                    "Failed to connect to Aeron media driver: {:?}\n\
+                     Ensure an external media driver is running:\n\
+                     java -cp aeron-all.jar io.aeron.driver.MediaDriver",
+                    e
+                );
+                return;
+            }
+        };
 
         let mut group = c.benchmark_group("aeron-rs/allocations/subscription");
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let stream_id = 17001 + size.bytes() as i32;
+            let stream_id = 13001 + size.bytes() as i32;
 
-            let publication = client
-                .add_publication(CHANNEL, stream_id)
-                .expect("Failed to add publication");
-            let subscription = client
-                .add_subscription(CHANNEL, stream_id)
-                .expect("Failed to add subscription");
-
-            let mut publisher = AeronRsPublisher::new(publication);
-            let mut subscriber = AeronRsSubscriber::new(subscription);
-
-            thread::sleep(Duration::from_millis(100));
+            let (publication, subscription) = match setup_pub_sub(&mut aeron, stream_id) {
+                Some(s) => s,
+                None => return,
+            };
 
             // Pre-publish some messages
-            let buffer = size.create_buffer();
+            let mut buffer = size.create_buffer();
             for _ in 0..100 {
-                let _ = publisher.offer(&buffer);
+                let atomic_buffer = AtomicBuffer::wrap_slice(&mut buffer);
+                let pub_guard = publication.lock().expect("Publication mutex poisoned");
+                let _ = pub_guard.offer(atomic_buffer);
             }
             thread::sleep(Duration::from_millis(50));
 
             group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
                 b.iter(|| {
-                    let _ = subscriber.poll(|_fragment| Ok(()));
+                    let mut sub_guard = subscription.lock().expect("Subscription mutex poisoned");
+                    let _ = sub_guard.poll(&mut |_, _, _, _| {}, 1);
                 });
             });
         }
@@ -302,13 +348,12 @@ criterion_group!(
 criterion_group!(
     benches,
     aeron_rs_bench::bench_publication_allocations,
-    aeron_rs_bench::bench_publication_mut_allocations,
     aeron_rs_bench::bench_subscription_allocations
 );
 
 #[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]
 fn no_backend(_c: &mut Criterion) {
-    eprintln!("No Aeron backend enabled. Enable 'rusteron' or 'aeron-rs' feature.");
+    eprintln!("Benchmarks require 'rusteron' or 'aeron-rs' feature.");
 }
 
 #[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]

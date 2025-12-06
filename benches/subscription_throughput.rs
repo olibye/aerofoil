@@ -10,6 +10,7 @@
 
 mod common;
 
+#[cfg(feature = "rusteron")]
 use aerofoil::transport::AeronPublisher;
 use common::{MessageSize, CHANNEL};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -271,75 +272,86 @@ mod rusteron_bench {
     }
 }
 
-#[cfg(feature = "aeron-rs")]
+#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
 mod aeron_rs_bench {
     use super::*;
-    use aerofoil::transport::aeron_rs::{AeronRsPublisher, AeronRsSubscriber};
-    use aerofoil::transport::AeronSubscriber;
-    use aeron_rs::client::Client;
+    use aeron_rs::aeron::Aeron;
+    use aeron_rs::concurrent::atomic_buffer::AtomicBuffer;
     use aeron_rs::context::Context;
+    use common::MediaDriverGuard;
+    use std::ffi::CString;
 
-    pub fn bench_poll_throughput(c: &mut Criterion) {
+    /// Run all aeron-rs subscription benchmarks.
+    pub fn bench_all(c: &mut Criterion) {
+        let _driver = match MediaDriverGuard::start() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Skipping benchmark: {}", e);
+                return;
+            }
+        };
+
         let context = Context::new();
-        let mut client = Client::connect(context).expect("Failed to connect to media driver");
+        let mut aeron = match Aeron::new(context) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!(
+                    "Failed to connect to Aeron media driver: {:?}\n\
+                     Ensure an external media driver is running:\n\
+                     java -cp aeron-all.jar io.aeron.driver.MediaDriver",
+                    e
+                );
+                return;
+            }
+        };
 
-        let mut group = c.benchmark_group("aeron-rs/poll");
-
-        for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let stream_id = 6001 + size.bytes() as i32;
-
-            let publication = client
-                .add_publication(CHANNEL, stream_id)
-                .expect("Failed to add publication");
-
-            let subscription = client
-                .add_subscription(CHANNEL, stream_id)
-                .expect("Failed to add subscription");
-
-            let mut publisher = AeronRsPublisher::new(publication);
-            let mut subscriber = AeronRsSubscriber::new(subscription);
-
-            thread::sleep(Duration::from_millis(100));
-
-            group.throughput(Throughput::Bytes(size.bytes() as u64));
-
-            group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
-                let buffer = size.create_buffer();
-
-                b.iter(|| {
-                    // Publish a message
-                    let _ = publisher.offer(&buffer);
-
-                    // Poll for it
-                    let count = subscriber.poll(|_fragment| Ok(())).unwrap_or(0);
-
-                    black_box(count)
-                });
-            });
-        }
-
-        group.finish();
+        // Bare aeron-rs benchmarks (baseline)
+        bench_poll_bare(c, &mut aeron);
     }
 
-    pub fn bench_poll_with_parsing(c: &mut Criterion) {
-        let context = Context::new();
-        let mut client = Client::connect(context).expect("Failed to connect to media driver");
-
-        let mut group = c.benchmark_group("aeron-rs/poll_parse");
+    /// Benchmark bare aeron-rs poll (baseline, no abstraction).
+    fn bench_poll_bare(c: &mut Criterion, aeron: &mut Aeron) {
+        let mut group = c.benchmark_group("aeron-rs/poll/bare");
+        group.warm_up_time(Duration::from_millis(500));
+        group.measurement_time(Duration::from_secs(1));
+        group.sample_size(10);
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let stream_id = 6101 + size.bytes() as i32;
+            let stream_id = 5000 + size.bytes() as i32;
+            let channel = CString::new(CHANNEL).expect("Invalid channel");
 
-            let publication = client
-                .add_publication(CHANNEL, stream_id)
-                .expect("Failed to add publication");
+            // Add publication
+            let pub_reg_id = match aeron.add_publication(channel.clone(), stream_id) {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("Failed to add publication: {:?}", e);
+                    return;
+                }
+            };
 
-            let subscription = client
-                .add_subscription(CHANNEL, stream_id)
-                .expect("Failed to add subscription");
+            // Add subscription
+            let sub_reg_id = match aeron.add_subscription(channel, stream_id) {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("Failed to add subscription: {:?}", e);
+                    return;
+                }
+            };
 
-            let mut publisher = AeronRsPublisher::new(publication);
-            let mut subscriber = AeronRsSubscriber::new(subscription);
+            // Poll until ready
+            let publication = loop {
+                match aeron.find_publication(pub_reg_id) {
+                    Ok(pub_arc) => break pub_arc,
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            };
+
+            let subscription = loop {
+                match aeron.find_subscription(sub_reg_id) {
+                    Ok(sub_arc) => break sub_arc,
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            };
 
             thread::sleep(Duration::from_millis(100));
 
@@ -347,23 +359,23 @@ mod aeron_rs_bench {
 
             group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
                 let mut buffer = size.create_buffer();
-                buffer[0..8].copy_from_slice(&42i64.to_le_bytes());
 
                 b.iter(|| {
-                    let _ = publisher.offer(&buffer);
+                    // Direct aeron-rs publish
+                    {
+                        let atomic_buffer = AtomicBuffer::wrap_slice(&mut buffer);
+                        let pub_guard = publication.lock().expect("Publication mutex poisoned");
+                        let _ = black_box(pub_guard.offer(black_box(atomic_buffer)));
+                    }
 
-                    let mut value: i64 = 0;
-                    let count = subscriber
-                        .poll(|fragment| {
-                            if fragment.len() >= 8 {
-                                let bytes: [u8; 8] = fragment[0..8].try_into().unwrap();
-                                value = i64::from_le_bytes(bytes);
-                            }
-                            Ok(())
-                        })
-                        .unwrap_or(0);
+                    // Direct aeron-rs poll
+                    let count = {
+                        let mut sub_guard =
+                            subscription.lock().expect("Subscription mutex poisoned");
+                        sub_guard.poll(&mut |_buffer, _offset, _length, _header| {}, 1)
+                    };
 
-                    black_box((count, value))
+                    black_box(count)
                 });
             });
         }
@@ -376,15 +388,11 @@ mod aeron_rs_bench {
 criterion_group!(benches, rusteron_bench::bench_all);
 
 #[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
-criterion_group!(
-    benches,
-    aeron_rs_bench::bench_poll_throughput,
-    aeron_rs_bench::bench_poll_with_parsing
-);
+criterion_group!(benches, aeron_rs_bench::bench_all);
 
 #[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]
 fn no_backend(_c: &mut Criterion) {
-    eprintln!("No Aeron backend enabled. Enable 'rusteron' or 'aeron-rs' feature.");
+    eprintln!("Benchmarks require 'rusteron' or 'aeron-rs' feature.");
 }
 
 #[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]

@@ -46,10 +46,14 @@ impl MediaDriverGuard {
             )
         })?;
 
-        // Increase conductor timeout for benchmarks (30 seconds instead of 10)
+        // Increase timeouts for benchmarks to avoid service interval exceeded errors
+        // Default is 10 seconds which is too short for longer benchmark runs
         driver_context
-            .set_driver_timeout_ms(30_000)
+            .set_driver_timeout_ms(60_000) // 60 seconds driver timeout
             .map_err(|e| format!("Failed to set driver timeout: {:?}", e))?;
+        driver_context
+            .set_client_liveness_timeout_ns(60_000_000_000) // 60 seconds client liveness
+            .map_err(|e| format!("Failed to set client liveness timeout: {:?}", e))?;
 
         let (stop_signal, _driver_handle) = AeronDriver::launch_embedded(driver_context, false);
 
@@ -62,14 +66,15 @@ impl MediaDriverGuard {
     /// Starts a media driver for aeron-rs benchmarks.
     ///
     /// Note: aeron-rs requires an external media driver to be running.
-    /// This function returns an error directing the user to start it manually.
+    /// This returns a dummy guard that assumes the driver is already running.
+    /// If no driver is available, connection will fail when creating publications.
     #[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
     pub fn start() -> Result<Self, String> {
-        Err(
-            "aeron-rs benchmarks require an external Aeron media driver.\n\
-             Start the Java media driver with: java -cp aeron-all.jar io.aeron.driver.MediaDriver"
-                .to_string(),
-        )
+        // aeron-rs requires an external media driver - assume it's running
+        // Connection errors will surface when trying to create publications/subscriptions
+        Ok(MediaDriverGuard {
+            stop_signal: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     #[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]

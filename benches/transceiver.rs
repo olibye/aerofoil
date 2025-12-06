@@ -5,6 +5,7 @@
 
 mod common;
 
+#[cfg(feature = "rusteron")]
 use aerofoil::transport::{AeronPublisher, AeronSubscriber};
 use common::{MessageSize, CHANNEL};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -319,44 +320,344 @@ mod rusteron_bench {
     }
 }
 
-#[cfg(feature = "aeron-rs")]
+#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
 mod aeron_rs_bench {
     use super::*;
-    use aerofoil::transport::aeron_rs::{AeronRsPublisher, AeronRsSubscriber};
-    use aeron_rs::client::Client;
+    use aeron_rs::aeron::Aeron;
+    use aeron_rs::concurrent::atomic_buffer::AtomicBuffer;
     use aeron_rs::context::Context;
+    use aeron_rs::publication::Publication;
+    use aeron_rs::subscription::Subscription;
+    use common::MediaDriverGuard;
+    use std::ffi::CString;
+    use std::sync::{Arc, Mutex};
 
+    fn setup_transceiver(
+        aeron: &mut Aeron,
+        pub_stream: i32,
+        sub_stream: i32,
+    ) -> Option<(Arc<Mutex<Publication>>, Arc<Mutex<Subscription>>)> {
+        let channel = CString::new(CHANNEL).expect("Invalid channel");
+
+        // Add publication
+        let pub_reg_id = match aeron.add_publication(channel.clone(), pub_stream) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("Failed to add publication: {:?}", e);
+                return None;
+            }
+        };
+
+        // Add subscription
+        let sub_reg_id = match aeron.add_subscription(channel, sub_stream) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("Failed to add subscription: {:?}", e);
+                return None;
+            }
+        };
+
+        // Poll until ready
+        let publication = loop {
+            match aeron.find_publication(pub_reg_id) {
+                Ok(pub_arc) => break pub_arc,
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        };
+
+        let subscription = loop {
+            match aeron.find_subscription(sub_reg_id) {
+                Ok(sub_arc) => break sub_arc,
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        };
+
+        thread::sleep(Duration::from_millis(100));
+
+        Some((publication, subscription))
+    }
+
+    /// Benchmark simultaneous publish/subscribe on different streams.
     pub fn bench_simultaneous_pub_sub(c: &mut Criterion) {
+        let _driver = match MediaDriverGuard::start() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Skipping benchmark: {}", e);
+                return;
+            }
+        };
+
         let context = Context::new();
-        let mut client = Client::connect(context).expect("Failed to connect to media driver");
+        let mut aeron = match Aeron::new(context) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!(
+                    "Failed to connect to Aeron media driver: {:?}\n\
+                     Ensure an external media driver is running:\n\
+                     java -cp aeron-all.jar io.aeron.driver.MediaDriver",
+                    e
+                );
+                return;
+            }
+        };
 
         let mut group = c.benchmark_group("aeron-rs/transceiver/simultaneous");
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let pub_stream = 10001;
-            let sub_stream = 10002;
+            let pub_stream = 7001;
+            let sub_stream = 7002;
 
-            let publication = client
-                .add_publication(CHANNEL, pub_stream)
-                .expect("Failed to add publication");
-            let subscription = client
-                .add_subscription(CHANNEL, sub_stream)
-                .expect("Failed to add subscription");
+            let (publication, subscription) = match setup_transceiver(&mut aeron, pub_stream, sub_stream) {
+                Some(s) => s,
+                None => return,
+            };
 
-            let mut publisher = AeronRsPublisher::new(publication);
-            let mut subscriber = AeronRsSubscriber::new(subscription);
+            group.throughput(Throughput::Bytes(size.bytes() as u64 * 2)); // pub + sub
 
-            thread::sleep(Duration::from_millis(100));
+            group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
+                let mut buffer = size.create_buffer();
+
+                b.iter(|| {
+                    // Publish
+                    let pub_result = {
+                        let atomic_buffer = AtomicBuffer::wrap_slice(&mut buffer);
+                        let pub_guard = publication.lock().expect("Publication mutex poisoned");
+                        pub_guard.offer(atomic_buffer)
+                    };
+
+                    // Poll
+                    let poll_result = {
+                        let mut sub_guard = subscription.lock().expect("Subscription mutex poisoned");
+                        sub_guard.poll(&mut |_buffer, _offset, _length, _header| {}, 1)
+                    };
+
+                    black_box((pub_result, poll_result))
+                });
+            });
+        }
+
+        group.finish();
+    }
+
+    /// Benchmark request/response roundtrip latency.
+    pub fn bench_request_response(c: &mut Criterion) {
+        let _driver = match MediaDriverGuard::start() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Skipping benchmark: {}", e);
+                return;
+            }
+        };
+
+        let context = Context::new();
+        let mut aeron = match Aeron::new(context) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!(
+                    "Failed to connect to Aeron media driver: {:?}\n\
+                     Ensure an external media driver is running:\n\
+                     java -cp aeron-all.jar io.aeron.driver.MediaDriver",
+                    e
+                );
+                return;
+            }
+        };
+
+        let mut group = c.benchmark_group("aeron-rs/transceiver/roundtrip");
+
+        for size in [MessageSize::Small, MessageSize::Medium] {
+            let request_stream = 8001;
+            let response_stream = 8002;
+            let channel = CString::new(CHANNEL).expect("Invalid channel");
+
+            // Client: publishes requests, subscribes to responses
+            let client_pub_id = aeron.add_publication(channel.clone(), request_stream).expect("Failed");
+            let client_sub_id = aeron.add_subscription(channel.clone(), response_stream).expect("Failed");
+
+            // Server: subscribes to requests, publishes responses
+            let server_sub_id = aeron.add_subscription(channel.clone(), request_stream).expect("Failed");
+            let server_pub_id = aeron.add_publication(channel, response_stream).expect("Failed");
+
+            // Wait for all to be ready
+            let client_pub = loop {
+                match aeron.find_publication(client_pub_id) {
+                    Ok(p) => break p,
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            };
+            let client_sub = loop {
+                match aeron.find_subscription(client_sub_id) {
+                    Ok(s) => break s,
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            };
+            let server_sub = loop {
+                match aeron.find_subscription(server_sub_id) {
+                    Ok(s) => break s,
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            };
+            let server_pub = loop {
+                match aeron.find_publication(server_pub_id) {
+                    Ok(p) => break p,
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            };
+
+            thread::sleep(Duration::from_millis(200));
+
+            group.throughput(Throughput::Elements(1));
+
+            group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
+                let mut request = size.create_buffer();
+                let mut response = size.create_buffer();
+
+                b.iter(|| {
+                    // Client sends request
+                    loop {
+                        let atomic_buffer = AtomicBuffer::wrap_slice(&mut request);
+                        let pub_guard = client_pub.lock().expect("Mutex poisoned");
+                        if pub_guard.offer(atomic_buffer).is_ok() {
+                            break;
+                        }
+                        thread::yield_now();
+                    }
+
+                    // Server polls for request
+                    let mut received_request = false;
+                    for _ in 0..1000 {
+                        let mut sub_guard = server_sub.lock().expect("Mutex poisoned");
+                        let count = sub_guard.poll(&mut |_, _, _, _| {}, 1);
+                        if count > 0 {
+                            received_request = true;
+                            break;
+                        }
+                        thread::yield_now();
+                    }
+
+                    if received_request {
+                        // Server sends response
+                        loop {
+                            let atomic_buffer = AtomicBuffer::wrap_slice(&mut response);
+                            let pub_guard = server_pub.lock().expect("Mutex poisoned");
+                            if pub_guard.offer(atomic_buffer).is_ok() {
+                                break;
+                            }
+                            thread::yield_now();
+                        }
+
+                        // Client polls for response
+                        for _ in 0..1000 {
+                            let mut sub_guard = client_sub.lock().expect("Mutex poisoned");
+                            let count = sub_guard.poll(&mut |_, _, _, _| {}, 1);
+                            if count > 0 {
+                                break;
+                            }
+                            thread::yield_now();
+                        }
+                    }
+                });
+            });
+        }
+
+        group.finish();
+    }
+
+    /// Benchmark bidirectional symmetric exchange.
+    pub fn bench_bidirectional(c: &mut Criterion) {
+        let _driver = match MediaDriverGuard::start() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Skipping benchmark: {}", e);
+                return;
+            }
+        };
+
+        let context = Context::new();
+        let mut aeron = match Aeron::new(context) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!(
+                    "Failed to connect to Aeron media driver: {:?}\n\
+                     Ensure an external media driver is running:\n\
+                     java -cp aeron-all.jar io.aeron.driver.MediaDriver",
+                    e
+                );
+                return;
+            }
+        };
+
+        let mut group = c.benchmark_group("aeron-rs/transceiver/bidirectional");
+
+        for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
+            let stream_a_to_b = 9001;
+            let stream_b_to_a = 9002;
+            let channel = CString::new(CHANNEL).expect("Invalid channel");
+
+            // Side A: pub to B, sub from B
+            let pub_a_id = aeron.add_publication(channel.clone(), stream_a_to_b).expect("Failed");
+            let sub_a_id = aeron.add_subscription(channel.clone(), stream_b_to_a).expect("Failed");
+
+            // Side B: pub to A, sub from A
+            let pub_b_id = aeron.add_publication(channel.clone(), stream_b_to_a).expect("Failed");
+            let sub_b_id = aeron.add_subscription(channel, stream_a_to_b).expect("Failed");
+
+            // Wait for all to be ready
+            let pub_a = loop {
+                match aeron.find_publication(pub_a_id) {
+                    Ok(p) => break p,
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            };
+            let sub_a = loop {
+                match aeron.find_subscription(sub_a_id) {
+                    Ok(s) => break s,
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            };
+            let pub_b = loop {
+                match aeron.find_publication(pub_b_id) {
+                    Ok(p) => break p,
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            };
+            let sub_b = loop {
+                match aeron.find_subscription(sub_b_id) {
+                    Ok(s) => break s,
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            };
+
+            thread::sleep(Duration::from_millis(200));
 
             group.throughput(Throughput::Bytes(size.bytes() as u64 * 2));
 
             group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
-                let buffer = size.create_buffer();
+                let mut buffer_a = size.create_buffer();
+                let mut buffer_b = size.create_buffer();
 
                 b.iter(|| {
-                    let pub_result = publisher.offer(&buffer);
-                    let poll_result = subscriber.poll(|_fragment| Ok(()));
-                    black_box((pub_result, poll_result))
+                    // Both sides publish
+                    {
+                        let atomic_buffer = AtomicBuffer::wrap_slice(&mut buffer_a);
+                        let pub_guard = pub_a.lock().expect("Mutex poisoned");
+                        let _ = pub_guard.offer(atomic_buffer);
+                    }
+                    {
+                        let atomic_buffer = AtomicBuffer::wrap_slice(&mut buffer_b);
+                        let pub_guard = pub_b.lock().expect("Mutex poisoned");
+                        let _ = pub_guard.offer(atomic_buffer);
+                    }
+
+                    // Both sides poll
+                    {
+                        let mut sub_guard = sub_a.lock().expect("Mutex poisoned");
+                        let _ = sub_guard.poll(&mut |_, _, _, _| {}, 1);
+                    }
+                    {
+                        let mut sub_guard = sub_b.lock().expect("Mutex poisoned");
+                        let _ = sub_guard.poll(&mut |_, _, _, _| {}, 1);
+                    }
                 });
             });
         }
@@ -374,11 +675,16 @@ criterion_group!(
 );
 
 #[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
-criterion_group!(benches, aeron_rs_bench::bench_simultaneous_pub_sub);
+criterion_group!(
+    benches,
+    aeron_rs_bench::bench_simultaneous_pub_sub,
+    aeron_rs_bench::bench_request_response,
+    aeron_rs_bench::bench_bidirectional
+);
 
 #[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]
 fn no_backend(_c: &mut Criterion) {
-    eprintln!("No Aeron backend enabled. Enable 'rusteron' or 'aeron-rs' feature.");
+    eprintln!("Benchmarks require 'rusteron' or 'aeron-rs' feature.");
 }
 
 #[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]
