@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+aeron-rs = { version = "0.1", optional = true }
 rusteron-client = { version = "0.1", optional = true }
 rusteron-media-driver = { version = "0.1", optional = true }
 wingfoil = "0.1"
@@ -11,3 +12,4 @@ wingfoil = "0.1"
 [features]
 default = ["rusteron"]
 rusteron = ["rusteron-client", "rusteron-media-driver"]
+aeron-rs = ["dep:aeron-rs"]

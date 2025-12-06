@@ -13,6 +13,9 @@ pub use error::TransportError;
 #[cfg(feature = "rusteron")]
 pub mod rusteron;
 
+#[cfg(feature = "aeron-rs")]
+pub mod aeron_rs;
+
 /// Publishes messages to an Aeron channel.
 ///
 /// This trait provides two publication methods:

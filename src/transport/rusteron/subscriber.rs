@@ -17,11 +17,6 @@ impl RusteronSubscriber {
     pub fn new(subscription: AeronSubscription) -> Self {
         RusteronSubscriber { subscription }
     }
-
-    /// Returns a reference to the underlying Rusteron subscription.
-    pub fn inner(&self) -> &AeronSubscription {
-        &self.subscription
-    }
 }
 
 impl AeronSubscriber for RusteronSubscriber {

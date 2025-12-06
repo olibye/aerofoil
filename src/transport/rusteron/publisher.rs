@@ -18,11 +18,6 @@ impl RusteronPublisher {
     pub fn new(publication: AeronPublication) -> Self {
         RusteronPublisher { publication }
     }
-
-    /// Returns a reference to the underlying Rusteron publication.
-    pub fn inner(&self) -> &AeronPublication {
-        &self.publication
-    }
 }
 
 impl AeronPublisher for RusteronPublisher {

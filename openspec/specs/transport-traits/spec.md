@@ -66,6 +66,21 @@ The library SHALL define buffer abstraction types with lifetime bounds that enab
 - **WHEN** receiving a message fragment
 - **THEN** a read-only buffer reference is provided without copying message data
 
+### Requirement: Implementation Encapsulation
+Transport adapter implementations SHALL NOT expose their inner wrapped types through public methods.
+
+#### Scenario: No inner access methods
+- **WHEN** implementing a transport adapter (e.g., `RusteronPublisher`, `AeronRsPublisher`)
+- **THEN** the implementation SHALL NOT provide `inner()`, `as_inner()`, or similar methods that expose the wrapped backend type
+
+#### Scenario: Backend-agnostic usage
+- **WHEN** application code uses a transport adapter
+- **THEN** it interacts only through the `AeronPublisher` or `AeronSubscriber` trait methods
+
+#### Scenario: Encapsulation rationale
+- **WHEN** users need backend-specific functionality
+- **THEN** they should construct and use the backend type directly, not through the adapter wrapper
+
 ### Requirement: Test Implementation Support
 The library SHALL design traits to be easily implementable for testing purposes without requiring an Aeron media driver.
 

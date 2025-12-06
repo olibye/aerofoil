@@ -7,6 +7,9 @@
 //! # Features
 //!
 //! - **`rusteron`** (default): Enables Rusteron adapter (requires C++ toolchain)
+//! - **`aeron-rs`**: Enables pure Rust aeron-rs adapter (no C++ toolchain required)
+//!
+//! Note: `rusteron` and `aeron-rs` features are mutually exclusive.
 //!
 //! # Architecture
 //!
@@ -14,6 +17,10 @@
 //!
 //! - [`transport`]: Trait-based transport abstractions and Aeron client adapters
 //! - [`nodes`]: Wingfoil node implementations for Aeron integration
+
+// Compile-time check: rusteron and aeron-rs features are mutually exclusive
+#[cfg(all(feature = "rusteron", feature = "aeron-rs"))]
+compile_error!("Cannot enable both 'rusteron' and 'aeron-rs' features. Choose one backend.");
 
 pub mod nodes;
 pub mod transport;
