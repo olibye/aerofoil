@@ -54,6 +54,21 @@ The library SHALL track heap allocations during benchmark execution to verify ze
 - **WHEN** receiving messages via subscription
 - **THEN** benchmarks verify no heap allocations occur in the message handling hot path
 
+### Requirement: Combined Pub/Sub Benchmarks
+The library SHALL benchmark combined publish/subscribe scenarios to measure real-world transceiver performance.
+
+#### Scenario: Simultaneous pub/sub latency
+- **WHEN** a node publishes messages while simultaneously receiving on another stream
+- **THEN** benchmarks measure both publish latency and receive latency under concurrent load
+
+#### Scenario: Request/response pattern
+- **WHEN** a benchmark simulates request/response over Aeron
+- **THEN** roundtrip latency (publish request, receive response) is measured
+
+#### Scenario: Symmetric transceiver
+- **WHEN** two processes exchange messages bidirectionally
+- **THEN** throughput and latency are measured for both directions simultaneously
+
 ### Requirement: CI Integration
 The library SHALL run benchmarks in continuous integration to detect performance regressions.
 

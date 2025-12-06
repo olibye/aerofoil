@@ -14,6 +14,8 @@ With both Rusteron and aeron-rs adapters implemented, we need objective performa
 - Set up Criterion.rs benchmarking framework per project tech stack
 - Create publication latency benchmarks for both Rusteron and aeron-rs
 - Create subscription throughput benchmarks for both backends
+- Create combined pub/sub (transceiver) benchmarks measuring concurrent publish and subscribe
+- Add request/response roundtrip latency benchmarks
 - Add allocation tracking to verify zero-copy behavior in hot path
 - Combine examples into benchmarks where possible per project conventions
 - Document benchmark methodology and how to interpret results
