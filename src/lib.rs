@@ -11,6 +11,28 @@
 //!
 //! Note: `rusteron` and `aeron-rs` features are mutually exclusive.
 //!
+//! # Choosing a Backend
+//!
+//! | Aspect | rusteron | aeron-rs |
+//! |--------|----------|----------|
+//! | Implementation | C++ wrapper (FFI) | Pure Rust |
+//! | Maturity | More mature | Less mature |
+//! | C++ toolchain | Required | Not required |
+//! | Cross-compilation | Complex | Simpler |
+//! | Performance | Production-tested | See benchmarks |
+//!
+//! Use `rusteron` (default) for production deployments with established toolchains.
+//! Use `aeron-rs` for pure Rust builds or simpler cross-compilation.
+//!
+//! # Publishing Methods
+//!
+//! The [`AeronPublisher`](transport::AeronPublisher) trait provides two offer methods:
+//!
+//! - `offer(&[u8])`: Accepts immutable buffer (may copy internally on aeron-rs)
+//! - `offer_mut(&mut [u8])`: Accepts mutable buffer (no copy on aeron-rs)
+//!
+//! Use `offer_mut` when you have a mutable buffer and want to avoid copies on aeron-rs.
+//!
 //! # Architecture
 //!
 //! The library is organized into:

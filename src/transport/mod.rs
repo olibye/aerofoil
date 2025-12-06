@@ -20,23 +20,24 @@ pub mod aeron_rs;
 ///
 /// This trait provides three publication methods:
 ///
-/// - [`offer`](AeronPublisher::offer): Ergonomic API taking `&[u8]` (may copy internally)
-/// - [`offer_mut`](AeronPublisher::offer_mut): Zero-copy API taking `&mut [u8]`
-/// - [`try_claim`](AeronPublisher::try_claim): Claim buffer for zero-copy writing
+/// - [`offer`](AeronPublisher::offer): Accepts `&[u8]` (may copy internally on some backends)
+/// - [`offer_mut`](AeronPublisher::offer_mut): Accepts `&mut [u8]` (avoids copy on aeron-rs)
+/// - [`try_claim`](AeronPublisher::try_claim): Claim buffer for direct writing
 ///
 /// # Choosing Between `offer` and `offer_mut`
 ///
 /// Use `offer` when you have immutable data or prioritize convenience.
-/// Use `offer_mut` when you have a mutable buffer and need maximum performance.
+/// Use `offer_mut` when you have a mutable buffer and want to avoid copies on aeron-rs.
 ///
 /// All methods are **guaranteed non-blocking** and will return immediately,
 /// even under back-pressure conditions.
 pub trait AeronPublisher {
-    /// Offers a message to the publication (ergonomic API).
+    /// Offers a message to the publication.
     ///
-    /// This method accepts an immutable buffer. Some backends may copy the data
-    /// internally. Use [`offer_mut`](AeronPublisher::offer_mut) for guaranteed
-    /// zero-copy when you have a mutable buffer.
+    /// This method accepts an immutable buffer. On aeron-rs, this copies the buffer
+    /// internally since the backend requires mutable access. Use
+    /// [`offer_mut`](AeronPublisher::offer_mut) to avoid the copy when you have
+    /// a mutable buffer.
     ///
     /// # Returns
     ///
@@ -45,10 +46,10 @@ pub trait AeronPublisher {
     /// - `Err(_)` - Other transport error occurred
     fn offer(&mut self, buffer: &[u8]) -> Result<i64, TransportError>;
 
-    /// Offers a message to the publication (zero-copy API).
+    /// Offers a message to the publication with a mutable buffer.
     ///
-    /// This method accepts a mutable buffer, enabling zero-copy publishing
-    /// on backends that require mutable access (e.g., aeron-rs).
+    /// This method accepts a mutable buffer. On aeron-rs, this avoids the internal
+    /// copy that `offer` requires. On rusteron, behavior is identical to `offer`.
     ///
     /// # Returns
     ///

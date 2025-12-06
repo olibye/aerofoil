@@ -25,9 +25,9 @@ The library SHALL define an `AeronPublisher` trait with methods for publishing m
 - **WHEN** calling `offer` with an immutable message buffer (`&[u8]`)
 - **THEN** the method attempts to publish (may copy internally) and returns success or back-pressure indication
 
-#### Scenario: Offer message with mutable buffer (zero-copy)
+#### Scenario: Offer message with mutable buffer
 - **WHEN** calling `offer_mut` with a mutable message buffer (`&mut [u8]`)
-- **THEN** the method publishes without intermediate copies on backends that support it (e.g., aeron-rs)
+- **THEN** the method publishes the message (avoids copy on aeron-rs)
 
 #### Scenario: Try claim buffer
 - **WHEN** calling try_claim to obtain a buffer for zero-copy writing
