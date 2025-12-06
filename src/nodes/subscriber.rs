@@ -96,43 +96,7 @@ where
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use aerofoil::nodes::AeronSubscriberValueRefNode;
-/// use aerofoil::transport::rusteron::RusteronSubscriber;
-/// use std::cell::RefCell;
-/// use std::rc::Rc;
-/// use wingfoil::{Graph, RunMode, RunFor};
-///
-/// // Create a parser for i64 messages (little-endian, 8 bytes)
-/// let parser = |fragment: &[u8]| -> Option<i64> {
-///     if fragment.len() >= 8 {
-///         let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
-///         Some(i64::from_le_bytes(bytes))
-///     } else {
-///         None
-///     }
-/// };
-///
-/// // Create the subscriber node
-/// let subscriber = RusteronSubscriber::new(subscription);
-/// let node = AeronSubscriberValueRefNode::new(subscriber, parser, 0);
-///
-/// // Use dual-Rc pattern for graph integration
-/// let node_rc = Rc::new(RefCell::new(node));
-/// let upstream_ref = node_rc.clone();      // For downstream nodes
-/// let graph_node: Rc<dyn Node> = node_rc; // For graph
-///
-/// // Create graph
-/// let mut graph = Graph::new(
-///     vec![graph_node],
-///     RunMode::RealTime,
-///     RunFor::Cycles(100)
-/// );
-///
-/// graph.run().expect("Graph execution failed");
-///
-/// // Downstream nodes can use upstream_ref.borrow().peek_ref()
-/// ```
+/// See `examples/subscriber_node_reference_access.rs` for a complete runnable example.
 pub struct AeronSubscriberValueRefNode<T, F, S>
 where
     T: Element,
@@ -160,20 +124,7 @@ where
     ///
     /// A new `AeronSubscriberValueRefNode` instance ready to be added to a Wingfoil graph.
     ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let parser = |fragment: &[u8]| -> Option<i64> {
-    ///     if fragment.len() >= 8 {
-    ///         let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
-    ///         Some(i64::from_le_bytes(bytes))
-    ///     } else {
-    ///         None
-    ///     }
-    /// };
-    ///
-    /// let node = AeronSubscriberValueRefNode::new(subscriber, parser, 0);
-    /// ```
+    /// See `examples/subscriber_node_reference_access.rs` for usage.
     pub fn new(subscriber: S, parser: F, initial_value: T) -> Self {
         Self {
             core: AeronSubscriberCore::new(subscriber, parser, initial_value),
@@ -185,19 +136,7 @@ where
     /// Returns `Rc<RefCell<Self>>` which can be cloned for the graph
     /// and used directly as upstream reference.
     ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let node = AeronSubscriberValueRefNode::builder()
-    ///     .subscriber(subscriber)
-    ///     .parser(parser)
-    ///     .default(0i64)
-    ///     .build_ref();
-    ///
-    /// // Clone for graph, use directly for upstream
-    /// let graph = Graph::new(vec![node.clone(), ...], ...);
-    /// let downstream = MyNode::new(node, callback);
-    /// ```
+    /// See `examples/dual_rc_pattern.rs` for usage.
     pub fn builder() -> super::builder::AeronSubscriberNodeBuilder<T, F, S>
     where
         F: 'static,
@@ -307,34 +246,7 @@ where
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use aerofoil::nodes::AeronSubscriberValueNode;
-/// use aerofoil::transport::rusteron::RusteronSubscriber;
-/// use std::cell::RefCell;
-/// use std::rc::Rc;
-/// use wingfoil::{Graph, RunMode, RunFor, StreamPeek};
-///
-/// // Create a parser for i64 messages (little-endian, 8 bytes)
-/// let parser = |fragment: &[u8]| -> Option<i64> {
-///     if fragment.len() >= 8 {
-///         let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
-///         Some(i64::from_le_bytes(bytes))
-///     } else {
-///         None
-///     }
-/// };
-///
-/// // Create the subscriber node
-/// let subscriber = RusteronSubscriber::new(subscription);
-/// let node = AeronSubscriberValueNode::new(subscriber, parser, 0);
-///
-/// // Wrap for graph integration
-/// let node_rc = Rc::new(RefCell::new(node));
-/// let upstream_ref = node_rc.clone();  // For downstream nodes
-///
-/// // Downstream nodes use peek_value() - clean, no deref needed
-/// let value: i64 = upstream_ref.peek_value();
-/// ```
+/// See `examples/subscriber_node_value_access.rs` for a complete runnable example.
 pub struct AeronSubscriberValueNode<T, F, S>
 where
     T: Element,
@@ -364,18 +276,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// let parser = |fragment: &[u8]| -> Option<i64> {
-    ///     if fragment.len() >= 8 {
-    ///         let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
-    ///         Some(i64::from_le_bytes(bytes))
-    ///     } else {
-    ///         None
-    ///     }
-    /// };
-    ///
-    /// let node = AeronSubscriberValueNode::new(subscriber, parser, 0);
-    /// ```
+    /// See `examples/subscriber_node_value_access.rs` for a complete example.
     pub fn new(subscriber: S, parser: F, initial_value: T) -> Self {
         Self {
             core: AeronSubscriberCore::new(subscriber, parser, initial_value),
@@ -389,17 +290,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// let node = AeronSubscriberValueNode::builder()
-    ///     .subscriber(subscriber)
-    ///     .parser(parser)
-    ///     .default(0i64)
-    ///     .build();
-    ///
-    /// // Clone for graph, use directly for upstream
-    /// let graph = Graph::new(vec![node.clone(), ...], ...);
-    /// let downstream = MyNode::new(node, callback);
-    /// ```
+    /// See `examples/subscriber_node_value_access.rs` for a complete example.
     pub fn builder() -> super::builder::AeronSubscriberNodeBuilder<T, F, S>
     where
         F: 'static,

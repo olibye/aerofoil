@@ -5,25 +5,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use aerofoil::nodes::AeronSubscriberNodeBuilder;
-//!
-//! let node = AeronSubscriberNodeBuilder::new()
-//!     .subscriber(subscriber)
-//!     .parser(|bytes: &[u8]| {
-//!         if bytes.len() >= 8 {
-//!             Some(i64::from_le_bytes(bytes[0..8].try_into().ok()?))
-//!         } else {
-//!             None
-//!         }
-//!     })
-//!     .default(0i64)
-//!     .build();
-//!
-//! // Clone for graph (coerces to Rc<dyn Node>), use directly for upstream
-//! let graph = Graph::new(vec![node.clone(), downstream.into_node()], ...);
-//! let downstream = MyNode::new(node, callback);
-//! ```
+//! See `examples/subscriber_node_value_access.rs` for a complete example.
 
 use crate::transport::AeronSubscriber;
 use std::cell::RefCell;

@@ -25,18 +25,7 @@ use wingfoil::{GraphState, MutableNode, StreamPeek, StreamPeekRef};
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use common::MediaDriverGuard;
-///
-/// #[test]
-/// fn my_test() {
-///     let _driver = MediaDriverGuard::start()
-///         .expect("Failed to start media driver");
-///
-///     // Test code using Aeron...
-///     // Driver automatically stops when _driver is dropped
-/// }
-/// ```
+/// See `tests/summing_node_test.rs` for usage in a complete integration test.
 pub struct MediaDriverGuard {
     stop_signal: Arc<AtomicBool>,
 }
@@ -51,10 +40,7 @@ impl MediaDriverGuard {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// let driver = MediaDriverGuard::start()
-    ///     .expect("Failed to start media driver - see error for details");
-    /// ```
+    /// See `tests/summing_node_test.rs` for usage in a complete integration test.
     pub fn start() -> Result<Self, String> {
         use rusteron_media_driver::{AeronDriver, AeronDriverContext};
 
@@ -115,20 +101,7 @@ pub struct SummingNodeOutput {
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use common::{SummingNode, SummingNodeOutput};
-/// use std::cell::RefCell;
-/// use std::rc::Rc;
-///
-/// let outputs = Rc::new(RefCell::new(Vec::new()));
-/// let outputs_clone = outputs.clone();
-///
-/// let callback = move |output: SummingNodeOutput| {
-///     outputs_clone.borrow_mut().push(output);
-/// };
-///
-/// let summing_node = SummingNode::new(upstream_ref, callback);
-/// ```
+/// See `examples/summing_node_composition.rs` for a complete example.
 pub struct SummingNode<T, F>
 where
     T: StreamPeekRef<i64>,
@@ -227,13 +200,8 @@ pub struct CountingNodeOutput {
 ///
 /// # Comparison with Reference Pattern
 ///
-/// ```rust,ignore
-/// // Reference pattern (SummingNode):
-/// let value: i64 = *self.upstream.borrow().peek_ref();
-///
-/// // Value pattern (CountingNode):
-/// let value: i64 = self.upstream.peek_value();  // Cleaner!
-/// ```
+/// Reference pattern (SummingNode): `*self.upstream.borrow().peek_ref()`
+/// Value pattern (CountingNode): `self.upstream.peek_value()` (cleaner!)
 ///
 /// # How Value Access Works
 ///
@@ -243,20 +211,7 @@ pub struct CountingNodeOutput {
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use common::{CountingNode, CountingNodeOutput};
-/// use std::cell::RefCell;
-/// use std::rc::Rc;
-///
-/// let outputs = Rc::new(RefCell::new(Vec::new()));
-/// let outputs_clone = outputs.clone();
-///
-/// let callback = move |output: CountingNodeOutput| {
-///     outputs_clone.borrow_mut().push(output);
-/// };
-///
-/// let counting_node = CountingNode::new(upstream_ref, callback);
-/// ```
+/// See `examples/counting_node_composition.rs` for a complete example.
 pub struct CountingNode<T, F>
 where
     T: StreamPeekRef<i64>,
@@ -296,13 +251,8 @@ where
     /// Reads the latest value from upstream using the value-access pattern.
     ///
     /// **Key difference from reference pattern:**
-    /// ```rust,ignore
-    /// // Value pattern - clean and direct (Wingfoil auto-implements peek_value for RefCell)
-    /// let current = self.upstream.peek_value();
-    ///
-    /// // vs. reference pattern - requires borrow + deref
-    /// let current = *self.upstream.borrow().peek_ref();
-    /// ```
+    /// - Value pattern: `self.upstream.peek_value()` (clean and direct)
+    /// - Reference pattern: `*self.upstream.borrow().peek_ref()` (requires borrow + deref)
     fn process_upstream(&mut self) {
         // Using peek_value() for clean value access - no deref needed!
         // Wingfoil auto-implements StreamPeek::peek_value() for RefCell<T> where T: StreamPeekRef

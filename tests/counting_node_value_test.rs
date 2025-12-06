@@ -12,15 +12,8 @@
 //!
 //! # Comparison with Reference Pattern
 //!
-//! Reference pattern (summing_node_test.rs):
-//! ```rust,ignore
-//! let value: i64 = *self.upstream.borrow().peek_ref();  // Explicit deref
-//! ```
-//!
-//! Value pattern (this test):
-//! ```rust,ignore
-//! let value: i64 = self.upstream.peek_value();  // Clean, no deref
-//! ```
+//! - Reference pattern (summing_node_test.rs): `*self.upstream.borrow().peek_ref()` (explicit deref)
+//! - Value pattern (this test): `self.upstream.peek_value()` (clean, no deref)
 //!
 //! # Running this test
 //!

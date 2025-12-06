@@ -146,9 +146,7 @@ fn given_input_stream_when_fan_out_graph_runs_then_publishes_sum_and_count() {
     // Create SummingNode with callback that publishes to sum stream
     let sum_pub_clone = sum_publisher.clone();
     let summing_node = SummingNode::new(subscriber_node.clone(), move |output| {
-        let _ = sum_pub_clone
-            .borrow_mut()
-            .offer(&output.sum.to_le_bytes());
+        let _ = sum_pub_clone.borrow_mut().offer(&output.sum.to_le_bytes());
     });
 
     // Create CountingNode with callback that publishes to count stream
