@@ -43,7 +43,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::thread;
 use std::time::Duration;
-use wingfoil::{Graph, IntoNode, Node, RunFor, RunMode};
+use wingfoil::{Graph, IntoNode, RunFor, RunMode};
 
 #[test]
 fn given_aeron_messages_when_value_node_processes_then_counts_correctly() {
@@ -112,20 +112,13 @@ fn given_aeron_messages_when_value_node_processes_then_counts_correctly() {
         }
     };
 
-    // Create AeronSubscriberValueNode - value-access transport layer
-    // This implements StreamPeek<i64> for clean value access
-    let value_node = AeronSubscriberValueNode::new(subscriber, parser, 0i64);
-
-    // Wrap for graph integration
-    // Note: We still use RefCell for graph integration (for mutation during polling)
-    // but downstream access via peek_value() is cleaner than peek_ref()
-    let value_node_rc = Rc::new(RefCell::new(value_node));
-
-    // Clone for upstream reference - CountingNode will use peek_value()
-    let upstream_ref = value_node_rc.clone();
-
-    // Cast to Rc<dyn Node> for graph
-    let value_graph_node: Rc<dyn Node> = value_node_rc;
+    // Create AeronSubscriberValueNode using the builder pattern
+    // Returns Rc<RefCell<...>> which can be cloned for the graph and used for upstream
+    let subscriber_node = AeronSubscriberValueNode::builder()
+        .subscriber(subscriber)
+        .parser(parser)
+        .default(0i64)
+        .build();
 
     // Create callback to collect outputs
     let outputs: Rc<RefCell<Vec<CountingNodeOutput>>> = Rc::new(RefCell::new(Vec::new()));
@@ -136,14 +129,15 @@ fn given_aeron_messages_when_value_node_processes_then_counts_correctly() {
     };
 
     // Create CountingNode - demonstrates value-access pattern
-    let counting_node = CountingNode::new(upstream_ref, output_callback);
+    let counting_node = CountingNode::new(subscriber_node.clone(), output_callback);
 
     // Convert to dyn Node
     let counting_graph_node = RefCell::new(counting_node).into_node();
 
     // Create and run Wingfoil graph
+    // subscriber_node.clone() coerces to Rc<dyn Node> for the graph
     let mut graph = Graph::new(
-        vec![value_graph_node, counting_graph_node],
+        vec![subscriber_node, counting_graph_node],
         RunMode::RealTime,
         RunFor::Cycles(10),
     );

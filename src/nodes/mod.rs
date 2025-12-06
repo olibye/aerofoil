@@ -102,6 +102,8 @@
 //! - The graph needs `Rc<dyn Node>` for its heterogeneous vector
 //! - Wingfoil's `into_node()` consumes the value, so we manage Rc ourselves
 
+mod builder;
 mod subscriber;
 
+pub use builder::AeronSubscriberNodeBuilder;
 pub use subscriber::{AeronSubscriberValueNode, AeronSubscriberValueRefNode};

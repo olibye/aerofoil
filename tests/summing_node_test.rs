@@ -47,7 +47,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::thread;
 use std::time::Duration;
-use wingfoil::{Graph, IntoNode, Node, RunFor, RunMode};
+use wingfoil::{Graph, IntoNode, RunFor, RunMode};
 
 #[test]
 fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum() {
@@ -117,25 +117,13 @@ fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum(
         }
     };
 
-    // Create AeronSubscriberValueRefNode - this is the transport layer that polls Aeron
-    // and implements StreamPeekRef<i64> for downstream consumption
-    let aeron_node = AeronSubscriberValueRefNode::new(subscriber, parser, 0i64);
-
-    // DUAL-RC PATTERN: We need to share this node in two ways:
-    // 1. As upstream reference (concrete type) for SummingNode to call peek_ref()
-    // 2. As graph node (Rc<dyn Node>) for the graph's heterogeneous vector
-    //
-    // We manually create Rc<RefCell<>> instead of using into_node() because:
-    // - into_node() consumes the value and returns Rc<dyn Node> (type-erased)
-    // - We need to clone BEFORE type erasure to preserve concrete type for peek access
-    let aeron_node_rc: Rc<RefCell<_>> = Rc::new(RefCell::new(aeron_node));
-
-    // Clone the Rc for upstream reference - keeps concrete type for peek_ref()
-    let upstream_ref = aeron_node_rc.clone();
-
-    // Cast to Rc<dyn Node> for graph - type erasure to fit in heterogeneous vector
-    // We can upcast Rc<RefCell<ConcreteNode>> to Rc<dyn Node> because RefCell<T> implements Node
-    let aeron_graph_node: Rc<dyn Node> = aeron_node_rc;
+    // Create AeronSubscriberValueRefNode using the builder pattern
+    // Returns Rc<RefCell<...>> which can be cloned for the graph and used for upstream
+    let subscriber_node = AeronSubscriberValueRefNode::builder()
+        .subscriber(subscriber)
+        .parser(parser)
+        .default(0i64)
+        .build_ref();
 
     // Create a callback to collect outputs from the SummingNode
     // This uses Rc<RefCell<>> which is Wingfoil's single-threaded pattern for test observation
@@ -150,7 +138,7 @@ fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum(
 
     // Create SummingNode - this is the business logic layer that uses peek_ref()
     // to access values from the upstream AeronSubscriberValueRefNode
-    let summing_node = SummingNode::new(upstream_ref, output_callback);
+    let summing_node = SummingNode::new(subscriber_node.clone(), output_callback);
 
     // Convert SummingNode to dyn Node using into_node() helper
     let summing_graph_node = RefCell::new(summing_node).into_node();
@@ -159,8 +147,9 @@ fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum(
     // - AeronSubscriberValueRefNode: Polls Aeron and provides values via peek_ref()
     // - SummingNode: Consumes values via peek_ref() and maintains running sum
     // Run for 10 cycles to poll and process messages
+    // subscriber_node coerces to Rc<dyn Node> for the graph
     let mut graph = Graph::new(
-        vec![aeron_graph_node, summing_graph_node],
+        vec![subscriber_node, summing_graph_node],
         RunMode::RealTime,
         RunFor::Cycles(10),
     );

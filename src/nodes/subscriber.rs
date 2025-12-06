@@ -179,6 +179,32 @@ where
             core: AeronSubscriberCore::new(subscriber, parser, initial_value),
         }
     }
+
+    /// Creates a new builder for constructing this node type.
+    ///
+    /// Returns `Rc<RefCell<Self>>` which can be cloned for the graph
+    /// and used directly as upstream reference.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let node = AeronSubscriberValueRefNode::builder()
+    ///     .subscriber(subscriber)
+    ///     .parser(parser)
+    ///     .default(0i64)
+    ///     .build_ref();
+    ///
+    /// // Clone for graph, use directly for upstream
+    /// let graph = Graph::new(vec![node.clone(), ...], ...);
+    /// let downstream = MyNode::new(node, callback);
+    /// ```
+    pub fn builder() -> super::builder::AeronSubscriberNodeBuilder<T, F, S>
+    where
+        F: 'static,
+        S: 'static,
+    {
+        super::builder::AeronSubscriberNodeBuilder::new()
+    }
 }
 
 /// Wingfoil `MutableNode` implementation.
@@ -354,6 +380,32 @@ where
         Self {
             core: AeronSubscriberCore::new(subscriber, parser, initial_value),
         }
+    }
+
+    /// Creates a new builder for constructing this node type.
+    ///
+    /// Returns `Rc<RefCell<Self>>` which can be cloned for the graph
+    /// and used directly as upstream reference.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let node = AeronSubscriberValueNode::builder()
+    ///     .subscriber(subscriber)
+    ///     .parser(parser)
+    ///     .default(0i64)
+    ///     .build();
+    ///
+    /// // Clone for graph, use directly for upstream
+    /// let graph = Graph::new(vec![node.clone(), ...], ...);
+    /// let downstream = MyNode::new(node, callback);
+    /// ```
+    pub fn builder() -> super::builder::AeronSubscriberNodeBuilder<T, F, S>
+    where
+        F: 'static,
+        S: 'static,
+    {
+        super::builder::AeronSubscriberNodeBuilder::new()
     }
 }
 

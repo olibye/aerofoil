@@ -2,27 +2,27 @@
 
 ## Purpose
 
-Provides a fluent builder pattern for constructing Aeron subscriber nodes with automatic `Rc<RefCell<>>` wrapping, returning both the graph-ready node and upstream reference in a single call.
+Provides a fluent builder pattern for constructing Aeron subscriber nodes with automatic `Rc<RefCell<>>` wrapping.
 
 ## ADDED Requirements
 
 ### Requirement: Subscriber Node Builder
 
-The library SHALL provide an `AeronSubscriberNodeBuilder` that encapsulates the dual-Rc pattern for graph integration.
+The library SHALL provide an `AeronSubscriberNodeBuilder` that handles `Rc<RefCell<>>` wrapping.
 
-#### Scenario: Given builder when all fields set then builds valid node tuple
+#### Scenario: Given builder when all fields set then builds valid node
 
 - **GIVEN** an `AeronSubscriberNodeBuilder` with subscriber, parser, and default value set
 - **WHEN** `build()` is called
-- **THEN** returns a tuple of `(Rc<dyn Node>, Rc<RefCell<AeronSubscriberValueNode<T, F, S>>>)`
-- **AND** the graph node can be added to a Wingfoil graph
-- **AND** the upstream reference can be used by downstream nodes
+- **THEN** returns `Rc<RefCell<AeronSubscriberValueNode<T, F, S>>>`
+- **AND** the node can be cloned for the graph (coerces to `Rc<dyn Node>`)
+- **AND** the node can be used directly by downstream nodes
 
 #### Scenario: Given builder when build_ref called then builds ValueRefNode
 
 - **GIVEN** an `AeronSubscriberNodeBuilder` with subscriber, parser, and default value set
 - **WHEN** `build_ref()` is called
-- **THEN** returns a tuple of `(Rc<dyn Node>, Rc<RefCell<AeronSubscriberValueRefNode<T, F, S>>>)`
+- **THEN** returns `Rc<RefCell<AeronSubscriberValueRefNode<T, F, S>>>`
 
 #### Scenario: Given builder when required field missing then panics with clear message
 
@@ -70,7 +70,7 @@ The builder SHALL simplify integration test setup.
 
 - **GIVEN** a test requiring Aeron subscriber node in Wingfoil graph
 - **WHEN** using the builder pattern
-- **THEN** setup requires 3 lines instead of 4
+- **THEN** setup requires fewer lines
 - **AND** intent is clearer (no manual Rc/RefCell manipulation)
 
 ```rust
@@ -80,10 +80,14 @@ let value_node_rc = Rc::new(RefCell::new(value_node));
 let upstream_ref = value_node_rc.clone();
 let graph_node: Rc<dyn Node> = value_node_rc;
 
-// After (1 line, builder handles wrapping):
-let (graph_node, upstream) = AeronSubscriberValueNode::builder()
+// After (builder handles wrapping, clone for graph):
+let node = AeronSubscriberValueNode::builder()
     .subscriber(subscriber)
     .parser(parser)
     .default(0i64)
     .build();
+
+// Clone for graph (coerces to Rc<dyn Node>), use directly for upstream
+let graph = Graph::new(vec![node.clone(), downstream], ...);
+let downstream = MyNode::new(node, callback);
 ```

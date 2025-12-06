@@ -2,7 +2,7 @@
 
 ## Summary
 
-Add a builder pattern for `AeronSubscriberValueNode` and `AeronSubscriberValueRefNode` that eliminates the verbose `Rc<RefCell<>>` boilerplate and returns ready-to-use graph and upstream references.
+Add a builder pattern for `AeronSubscriberValueNode` and `AeronSubscriberValueRefNode` that eliminates the verbose `Rc<RefCell<>>` boilerplate.
 
 ## Motivation
 
@@ -16,22 +16,26 @@ let upstream_ref = value_node_rc.clone();
 let value_graph_node: Rc<dyn Node> = value_node_rc;
 ```
 
-This pattern is error-prone and obscures the actual intent. A builder would simplify this to:
+This pattern is error-prone and obscures the actual intent. A builder simplifies this to:
 
 ```rust
-// Proposed ergonomic pattern
-let (graph_node, upstream) = AeronSubscriberValueNode::builder()
+// Ergonomic pattern - builder handles Rc<RefCell<>> wrapping
+let node = AeronSubscriberValueNode::builder()
     .subscriber(subscriber)
     .parser(parser)
     .default(0i64)
     .build();
+
+// Clone for graph (coerces to Rc<dyn Node>), use directly for upstream
+let graph = Graph::new(vec![node.clone(), downstream], ...);
+let downstream = MyNode::new(node, callback);
 ```
 
 ## Scope
 
 - Add `AeronSubscriberNodeBuilder` struct with fluent API
 - Implement `builder()` method on both node types
-- Return tuple of `(Rc<dyn Node>, Rc<RefCell<Self>>)` from `build()`
+- Return `Rc<RefCell<Self>>` from `build()` / `build_ref()`
 - Unit tests demonstrating the pattern
 
 ## Out of Scope
