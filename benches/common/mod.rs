@@ -26,6 +26,18 @@ impl MediaDriverGuard {
     pub fn start() -> Result<Self, String> {
         use rusteron_media_driver::{AeronDriver, AeronDriverContext};
 
+        // Clean up any stale Aeron state from previous runs
+        // Default directory varies by platform: /dev/shm/aeron on Linux, /tmp/aeron-{user} on macOS
+        if let Ok(aeron_dir) = std::env::var("AERON_DIR") {
+            let _ = std::fs::remove_dir_all(&aeron_dir);
+        } else {
+            // Try common default locations
+            let _ = std::fs::remove_dir_all("/dev/shm/aeron");
+            if let Ok(user) = std::env::var("USER") {
+                let _ = std::fs::remove_dir_all(format!("/tmp/aeron-{}", user));
+            }
+        }
+
         let driver_context = AeronDriverContext::new().map_err(|e| {
             format!(
                 "Failed to create media driver context: {:?}\n\
@@ -33,6 +45,11 @@ impl MediaDriverGuard {
                 e
             )
         })?;
+
+        // Increase conductor timeout for benchmarks (30 seconds instead of 10)
+        driver_context
+            .set_driver_timeout_ms(30_000)
+            .map_err(|e| format!("Failed to set driver timeout: {:?}", e))?;
 
         let (stop_signal, _driver_handle) = AeronDriver::launch_embedded(driver_context, false);
 

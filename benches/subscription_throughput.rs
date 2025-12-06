@@ -21,20 +21,9 @@ mod rusteron_bench {
     use rusteron_client::IntoCString;
 
     fn setup_pub_sub(
+        aeron: &rusteron_client::Aeron,
         stream_id: i32,
-    ) -> Option<(MediaDriverGuard, RusteronPublisher, RusteronSubscriber)> {
-        let driver = match MediaDriverGuard::start() {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Skipping benchmark: {}", e);
-                return None;
-            }
-        };
-
-        let context = rusteron_client::AeronContext::new().expect("Failed to create context");
-        let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
-        aeron.start().expect("Failed to start Aeron");
-
+    ) -> (RusteronPublisher, RusteronSubscriber) {
         let async_pub = aeron
             .async_add_publication(&CHANNEL.into_c_string(), stream_id)
             .expect("Failed to start publication");
@@ -62,23 +51,43 @@ mod rusteron_bench {
 
         thread::sleep(Duration::from_millis(100));
 
-        Some((driver, publisher, subscriber))
+        (publisher, subscriber)
+    }
+
+    /// Run all rusteron subscription benchmarks with a single shared media driver.
+    pub fn bench_all(c: &mut Criterion) {
+        let _driver = match MediaDriverGuard::start() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Skipping benchmark: {}", e);
+                return;
+            }
+        };
+
+        let context = rusteron_client::AeronContext::new().expect("Failed to create context");
+        let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
+        aeron.start().expect("Failed to start Aeron");
+
+        bench_poll_throughput(c, &aeron);
+        bench_poll_with_parsing(c, &aeron);
+        bench_burst_throughput(c, &aeron);
     }
 
     /// Benchmark raw poll performance.
     ///
     /// This measures the throughput of the poll operation itself,
     /// which is the core subscription hot path.
-    pub fn bench_poll_throughput(c: &mut Criterion) {
+    fn bench_poll_throughput(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
         let mut group = c.benchmark_group("rusteron/poll");
+        // Limit times to avoid media driver service interval timeout
+        group.warm_up_time(Duration::from_millis(500));
+        group.measurement_time(Duration::from_secs(1));
+        group.sample_size(10);
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
             let stream_id = 5001 + size.bytes() as i32;
 
-            let (_driver, mut publisher, mut subscriber) = match setup_pub_sub(stream_id) {
-                Some(s) => s,
-                None => return,
-            };
+            let (mut publisher, mut subscriber) = setup_pub_sub(aeron, stream_id);
 
             group.throughput(Throughput::Bytes(size.bytes() as u64));
 
@@ -104,16 +113,17 @@ mod rusteron_bench {
     ///
     /// This measures the throughput when including message parsing overhead,
     /// simulating real-world usage where messages need to be deserialized.
-    pub fn bench_poll_with_parsing(c: &mut Criterion) {
+    fn bench_poll_with_parsing(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
         let mut group = c.benchmark_group("rusteron/poll_parse");
+        // Limit times to avoid media driver service interval timeout
+        group.warm_up_time(Duration::from_millis(500));
+        group.measurement_time(Duration::from_secs(2));
+        group.sample_size(20);
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
             let stream_id = 5101 + size.bytes() as i32;
 
-            let (_driver, mut publisher, mut subscriber) = match setup_pub_sub(stream_id) {
-                Some(s) => s,
-                None => return,
-            };
+            let (mut publisher, mut subscriber) = setup_pub_sub(aeron, stream_id);
 
             group.throughput(Throughput::Bytes(size.bytes() as u64));
 
@@ -150,17 +160,18 @@ mod rusteron_bench {
     ///
     /// Measures throughput when processing multiple messages per poll,
     /// which is more representative of high-frequency trading scenarios.
-    pub fn bench_burst_throughput(c: &mut Criterion) {
+    fn bench_burst_throughput(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
         let mut group = c.benchmark_group("rusteron/poll_burst");
+        // Limit times to avoid media driver service interval timeout
+        group.warm_up_time(Duration::from_millis(500));
+        group.measurement_time(Duration::from_secs(2));
+        group.sample_size(20);
         let burst_size = 100;
 
         for size in [MessageSize::Small, MessageSize::Medium] {
             let stream_id = 5201 + size.bytes() as i32;
 
-            let (_driver, mut publisher, mut subscriber) = match setup_pub_sub(stream_id) {
-                Some(s) => s,
-                None => return,
-            };
+            let (mut publisher, mut subscriber) = setup_pub_sub(aeron, stream_id);
 
             group.throughput(Throughput::Elements(burst_size as u64));
 
@@ -296,12 +307,7 @@ mod aeron_rs_bench {
 }
 
 #[cfg(feature = "rusteron")]
-criterion_group!(
-    benches,
-    rusteron_bench::bench_poll_throughput,
-    rusteron_bench::bench_poll_with_parsing,
-    rusteron_bench::bench_burst_throughput
-);
+criterion_group!(benches, rusteron_bench::bench_all);
 
 #[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
 criterion_group!(

@@ -19,7 +19,8 @@ mod rusteron_bench {
     use common::MediaDriverGuard;
     use rusteron_client::IntoCString;
 
-    pub fn bench_offer(c: &mut Criterion) {
+    /// Run all rusteron benchmarks with a single shared media driver.
+    pub fn bench_all(c: &mut Criterion) {
         let _driver = match MediaDriverGuard::start() {
             Ok(d) => d,
             Err(e) => {
@@ -32,6 +33,12 @@ mod rusteron_bench {
         let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
         aeron.start().expect("Failed to start Aeron");
 
+        bench_offer(c, &aeron);
+        bench_offer_mut(c, &aeron);
+        bench_try_claim(c, &aeron);
+    }
+
+    fn bench_offer(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
         let stream_id = 2001;
         let async_pub = aeron
             .async_add_publication(&CHANNEL.into_c_string(), stream_id)
@@ -46,6 +53,10 @@ mod rusteron_bench {
         thread::sleep(Duration::from_millis(100));
 
         let mut group = c.benchmark_group("rusteron/offer");
+        // Limit times to avoid media driver service interval timeout
+        group.warm_up_time(Duration::from_millis(500));
+        group.measurement_time(Duration::from_secs(2));
+        group.sample_size(20);
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
             let buffer = size.create_buffer();
@@ -65,19 +76,7 @@ mod rusteron_bench {
         group.finish();
     }
 
-    pub fn bench_offer_mut(c: &mut Criterion) {
-        let _driver = match MediaDriverGuard::start() {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Skipping benchmark: {}", e);
-                return;
-            }
-        };
-
-        let context = rusteron_client::AeronContext::new().expect("Failed to create context");
-        let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
-        aeron.start().expect("Failed to start Aeron");
-
+    fn bench_offer_mut(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
         let stream_id = 2002;
         let async_pub = aeron
             .async_add_publication(&CHANNEL.into_c_string(), stream_id)
@@ -92,6 +91,10 @@ mod rusteron_bench {
         thread::sleep(Duration::from_millis(100));
 
         let mut group = c.benchmark_group("rusteron/offer_mut");
+        // Limit times to avoid media driver service interval timeout
+        group.warm_up_time(Duration::from_millis(500));
+        group.measurement_time(Duration::from_secs(2));
+        group.sample_size(20);
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
             group.throughput(Throughput::Bytes(size.bytes() as u64));
@@ -107,19 +110,7 @@ mod rusteron_bench {
         group.finish();
     }
 
-    pub fn bench_try_claim(c: &mut Criterion) {
-        let _driver = match MediaDriverGuard::start() {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Skipping benchmark: {}", e);
-                return;
-            }
-        };
-
-        let context = rusteron_client::AeronContext::new().expect("Failed to create context");
-        let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
-        aeron.start().expect("Failed to start Aeron");
-
+    fn bench_try_claim(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
         let stream_id = 2003;
         let async_pub = aeron
             .async_add_publication(&CHANNEL.into_c_string(), stream_id)
@@ -134,6 +125,10 @@ mod rusteron_bench {
         thread::sleep(Duration::from_millis(100));
 
         let mut group = c.benchmark_group("rusteron/try_claim");
+        // Limit times to avoid media driver service interval timeout
+        group.warm_up_time(Duration::from_millis(500));
+        group.measurement_time(Duration::from_secs(2));
+        group.sample_size(20);
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
             let data = size.create_buffer();
@@ -262,12 +257,7 @@ mod aeron_rs_bench {
 }
 
 #[cfg(feature = "rusteron")]
-criterion_group!(
-    benches,
-    rusteron_bench::bench_offer,
-    rusteron_bench::bench_offer_mut,
-    rusteron_bench::bench_try_claim
-);
+criterion_group!(benches, rusteron_bench::bench_all);
 
 #[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
 criterion_group!(
