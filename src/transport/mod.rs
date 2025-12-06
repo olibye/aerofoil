@@ -18,19 +18,25 @@ pub mod aeron_rs;
 
 /// Publishes messages to an Aeron channel.
 ///
-/// This trait provides two publication methods:
+/// This trait provides three publication methods:
 ///
-/// - [`offer`](AeronPublisher::offer): Copy message data into Aeron buffer (simpler)
-/// - [`try_claim`](AeronPublisher::try_claim): Claim buffer for zero-copy writing (faster)
+/// - [`offer`](AeronPublisher::offer): Ergonomic API taking `&[u8]` (may copy internally)
+/// - [`offer_mut`](AeronPublisher::offer_mut): Zero-copy API taking `&mut [u8]`
+/// - [`try_claim`](AeronPublisher::try_claim): Claim buffer for zero-copy writing
+///
+/// # Choosing Between `offer` and `offer_mut`
+///
+/// Use `offer` when you have immutable data or prioritize convenience.
+/// Use `offer_mut` when you have a mutable buffer and need maximum performance.
 ///
 /// All methods are **guaranteed non-blocking** and will return immediately,
 /// even under back-pressure conditions.
 pub trait AeronPublisher {
-    /// Offers a message to the publication.
+    /// Offers a message to the publication (ergonomic API).
     ///
-    /// This method copies the provided buffer into the Aeron publication buffer.
-    /// It is non-blocking and will return immediately with back-pressure indication
-    /// if the buffer is full.
+    /// This method accepts an immutable buffer. Some backends may copy the data
+    /// internally. Use [`offer_mut`](AeronPublisher::offer_mut) for guaranteed
+    /// zero-copy when you have a mutable buffer.
     ///
     /// # Returns
     ///
@@ -38,6 +44,18 @@ pub trait AeronPublisher {
     /// - `Err(TransportError::BackPressure)` - Buffer is full, retry later
     /// - `Err(_)` - Other transport error occurred
     fn offer(&mut self, buffer: &[u8]) -> Result<i64, TransportError>;
+
+    /// Offers a message to the publication (zero-copy API).
+    ///
+    /// This method accepts a mutable buffer, enabling zero-copy publishing
+    /// on backends that require mutable access (e.g., aeron-rs).
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(position)` - The stream position where the message was published
+    /// - `Err(TransportError::BackPressure)` - Buffer is full, retry later
+    /// - `Err(_)` - Other transport error occurred
+    fn offer_mut(&mut self, buffer: &mut [u8]) -> Result<i64, TransportError>;
 
     /// Claims a buffer for zero-copy message writing.
     ///

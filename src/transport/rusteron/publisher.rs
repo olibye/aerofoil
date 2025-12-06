@@ -31,6 +31,15 @@ impl AeronPublisher for RusteronPublisher {
         result_to_transport_error(result)
     }
 
+    fn offer_mut(&mut self, buffer: &mut [u8]) -> Result<i64, TransportError> {
+        // Rusteron accepts &[u8], and &mut [u8] coerces to &[u8]
+        let result = self
+            .publication
+            .offer::<rusteron_client::AeronReservedValueSupplierLogger>(buffer, None);
+
+        result_to_transport_error(result)
+    }
+
     fn try_claim<'a>(&'a mut self, _length: usize) -> Result<ClaimBuffer<'a>, TransportError> {
         // TODO: Implement try_claim using Rusteron's AeronBufferClaim
         // This requires investigating how to safely expose the buffer from AeronBufferClaim

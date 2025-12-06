@@ -21,9 +21,13 @@ The library SHALL provide trait-based abstractions for Aeron transport operation
 ### Requirement: Publisher Trait
 The library SHALL define an `AeronPublisher` trait with methods for publishing messages to Aeron channels.
 
-#### Scenario: Offer message
-- **WHEN** calling the offer method with a message buffer
-- **THEN** the method attempts to publish and returns success or back-pressure indication
+#### Scenario: Offer message with immutable buffer
+- **WHEN** calling `offer` with an immutable message buffer (`&[u8]`)
+- **THEN** the method attempts to publish (may copy internally) and returns success or back-pressure indication
+
+#### Scenario: Offer message with mutable buffer (zero-copy)
+- **WHEN** calling `offer_mut` with a mutable message buffer (`&mut [u8]`)
+- **THEN** the method publishes without intermediate copies on backends that support it (e.g., aeron-rs)
 
 #### Scenario: Try claim buffer
 - **WHEN** calling try_claim to obtain a buffer for zero-copy writing

@@ -36,15 +36,17 @@ impl AeronRsPublisher {
 
 impl AeronPublisher for AeronRsPublisher {
     fn offer(&mut self, buffer: &[u8]) -> Result<i64, TransportError> {
-        // aeron-rs offer takes AtomicBuffer, which needs a mutable slice
-        // We need to copy to a mutable buffer since our API takes &[u8]
-        // Clone: Required because aeron-rs AtomicBuffer needs &mut [u8] but our trait takes &[u8]
+        // aeron-rs requires &mut [u8], so we copy the immutable buffer
         let mut buffer_copy = buffer.to_vec();
         let atomic_buffer = AtomicBuffer::wrap_slice(&mut buffer_copy);
-
-        // Call aeron-rs offer method
         let result = self.publication.offer(atomic_buffer);
+        result_to_transport_error(result)
+    }
 
+    fn offer_mut(&mut self, buffer: &mut [u8]) -> Result<i64, TransportError> {
+        // Zero-copy path: aeron-rs can use the mutable buffer directly
+        let atomic_buffer = AtomicBuffer::wrap_slice(buffer);
+        let result = self.publication.offer(atomic_buffer);
         result_to_transport_error(result)
     }
 
