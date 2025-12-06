@@ -3,6 +3,10 @@
 //! Measures the latency of publishing messages using the `offer` and `offer_mut`
 //! methods across different message sizes. Benchmarks are feature-gated to run
 //! with either rusteron or aeron-rs backend.
+//!
+//! Includes comparison between:
+//! - **bare**: Direct rusteron API calls (baseline)
+//! - **aerofoil**: Calls through aerofoil's `AeronPublisher` trait abstraction
 
 mod common;
 
@@ -33,13 +37,18 @@ mod rusteron_bench {
         let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
         aeron.start().expect("Failed to start Aeron");
 
-        bench_offer(c, &aeron);
-        bench_offer_mut(c, &aeron);
-        bench_try_claim(c, &aeron);
+        // Bare rusteron benchmarks (baseline)
+        bench_offer_bare(c, &aeron);
+
+        // Aerofoil trait abstraction benchmarks
+        bench_offer_aerofoil(c, &aeron);
+        bench_offer_mut_aerofoil(c, &aeron);
+        bench_try_claim_aerofoil(c, &aeron);
     }
 
-    fn bench_offer(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
-        let stream_id = 2001;
+    /// Benchmark bare rusteron offer (baseline, no abstraction).
+    fn bench_offer_bare(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
+        let stream_id = 2000;
         let async_pub = aeron
             .async_add_publication(&CHANNEL.into_c_string(), stream_id)
             .expect("Failed to start publication");
@@ -48,12 +57,9 @@ mod rusteron_bench {
             .poll_blocking(Duration::from_secs(5))
             .expect("Failed to complete publication");
 
-        let mut publisher = RusteronPublisher::new(publication);
-
         thread::sleep(Duration::from_millis(100));
 
-        let mut group = c.benchmark_group("rusteron/offer");
-        // Limit times to avoid media driver service interval timeout
+        let mut group = c.benchmark_group("rusteron/offer/bare");
         group.warm_up_time(Duration::from_millis(500));
         group.measurement_time(Duration::from_secs(2));
         group.sample_size(20);
@@ -67,6 +73,52 @@ mod rusteron_bench {
                 &buffer,
                 |b, buf| {
                     b.iter(|| {
+                        // Direct rusteron call - no trait abstraction
+                        let _ = black_box(
+                            publication
+                                .offer::<rusteron_client::AeronReservedValueSupplierLogger>(
+                                    black_box(buf),
+                                    None,
+                                ),
+                        );
+                    });
+                },
+            );
+        }
+
+        group.finish();
+    }
+
+    /// Benchmark aerofoil offer (with AeronPublisher trait abstraction).
+    fn bench_offer_aerofoil(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
+        let stream_id = 2001;
+        let async_pub = aeron
+            .async_add_publication(&CHANNEL.into_c_string(), stream_id)
+            .expect("Failed to start publication");
+
+        let publication = async_pub
+            .poll_blocking(Duration::from_secs(5))
+            .expect("Failed to complete publication");
+
+        let mut publisher = RusteronPublisher::new(publication);
+
+        thread::sleep(Duration::from_millis(100));
+
+        let mut group = c.benchmark_group("rusteron/offer/aerofoil");
+        group.warm_up_time(Duration::from_millis(500));
+        group.measurement_time(Duration::from_secs(2));
+        group.sample_size(20);
+
+        for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
+            let buffer = size.create_buffer();
+            group.throughput(Throughput::Bytes(size.bytes() as u64));
+
+            group.bench_with_input(
+                BenchmarkId::from_parameter(size.name()),
+                &buffer,
+                |b, buf| {
+                    b.iter(|| {
+                        // Through aerofoil's AeronPublisher trait
                         let _ = black_box(publisher.offer(black_box(buf)));
                     });
                 },
@@ -76,7 +128,7 @@ mod rusteron_bench {
         group.finish();
     }
 
-    fn bench_offer_mut(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
+    fn bench_offer_mut_aerofoil(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
         let stream_id = 2002;
         let async_pub = aeron
             .async_add_publication(&CHANNEL.into_c_string(), stream_id)
@@ -90,8 +142,7 @@ mod rusteron_bench {
 
         thread::sleep(Duration::from_millis(100));
 
-        let mut group = c.benchmark_group("rusteron/offer_mut");
-        // Limit times to avoid media driver service interval timeout
+        let mut group = c.benchmark_group("rusteron/offer_mut/aerofoil");
         group.warm_up_time(Duration::from_millis(500));
         group.measurement_time(Duration::from_secs(2));
         group.sample_size(20);
@@ -110,7 +161,7 @@ mod rusteron_bench {
         group.finish();
     }
 
-    fn bench_try_claim(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
+    fn bench_try_claim_aerofoil(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
         let stream_id = 2003;
         let async_pub = aeron
             .async_add_publication(&CHANNEL.into_c_string(), stream_id)
@@ -124,8 +175,7 @@ mod rusteron_bench {
 
         thread::sleep(Duration::from_millis(100));
 
-        let mut group = c.benchmark_group("rusteron/try_claim");
-        // Limit times to avoid media driver service interval timeout
+        let mut group = c.benchmark_group("rusteron/try_claim/aerofoil");
         group.warm_up_time(Duration::from_millis(500));
         group.measurement_time(Duration::from_secs(2));
         group.sample_size(20);
