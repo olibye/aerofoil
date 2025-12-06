@@ -14,10 +14,8 @@ fn check_aeron_availability() {
     if let Some(output) = aeronmd_output {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            println!(
-                "cargo:warning=Aeron media driver found in PATH at: {}",
-                path
-            );
+            // Info message (only visible in verbose mode, not a warning)
+            println!("cargo::metadata=aeron_path={}", path);
 
             // Derive library path from binary path
             // e.g., /path/to/aeron/cppbuild/Release/binaries/aeronmd
@@ -29,7 +27,7 @@ fn check_aeron_availability() {
                         let lib_path_str = lib_path.to_string_lossy();
                         println!("cargo:rustc-link-search=native={}", lib_path_str);
                         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_path_str);
-                        println!("cargo:warning=Added Aeron library path: {}", lib_path_str);
+                        println!("cargo::metadata=aeron_lib_path={}", lib_path_str);
                         return;
                     }
                 }
