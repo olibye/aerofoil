@@ -12,7 +12,9 @@ pub fn aeron_error_to_transport_error(err: aeron_rs::utils::errors::AeronError) 
     match err {
         AeronError::BackPressured => TransportError::BackPressure,
         AeronError::NotConnected => TransportError::Connection("Not connected".to_string()),
-        AeronError::PublicationClosed => TransportError::Connection("Publication closed".to_string()),
+        AeronError::PublicationClosed => {
+            TransportError::Connection("Publication closed".to_string())
+        }
         AeronError::AdminAction => {
             // AdminAction means the operation should be retried - treat as back-pressure
             TransportError::BackPressure

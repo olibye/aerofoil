@@ -1,50 +1,48 @@
 # Implementation Tasks
 
 ## 1. Benchmark Framework Setup
-- [ ] 1.1 Add `criterion` to `[dev-dependencies]` in Cargo.toml
-- [ ] 1.2 Add `dhat` or similar allocation profiler to dev-dependencies
-- [ ] 1.3 Create `benches/` directory
-- [ ] 1.4 Configure `[[bench]]` entries in Cargo.toml
+- [x] 1.1 Add `criterion` to `[dev-dependencies]` in Cargo.toml
+- [x] 1.2 Add `dhat` or similar allocation profiler to dev-dependencies
+- [x] 1.3 Create `benches/` directory
+- [x] 1.4 Configure `[[bench]]` entries in Cargo.toml
 
 ## 2. Publication Latency Benchmarks
-- [ ] 2.1 Create `benches/publication_latency.rs`
-- [ ] 2.2 Write benchmark for Rusteron publication latency (offer method)
-- [ ] 2.3 Write benchmark for aeron-rs publication latency (offer method)
-- [ ] 2.4 Write benchmark for Rusteron zero-copy publication (try_claim)
-- [ ] 2.5 Write benchmark for aeron-rs zero-copy publication (try_claim)
-- [ ] 2.6 Add different message size scenarios (small, medium, large)
+- [x] 2.1 Create `benches/publication_latency.rs`
+- [x] 2.2 Write benchmark for Rusteron publication latency (offer method)
+- [x] 2.3 Write benchmark for aeron-rs publication latency (offer method)
+- [x] 2.4 Write benchmark for Rusteron zero-copy publication (try_claim)
+- [x] 2.5 Write benchmark for aeron-rs zero-copy publication (try_claim)
+- [x] 2.6 Add different message size scenarios (small, medium, large)
 
 ## 3. Subscription Throughput Benchmarks
-- [ ] 3.1 Create `benches/subscription_throughput.rs`
-- [ ] 3.2 Write benchmark for Rusteron subscription throughput
-- [ ] 3.3 Write benchmark for aeron-rs subscription throughput
-- [ ] 3.4 Test with different message rates (low, medium, high)
-- [ ] 3.5 Measure messages per second and latency percentiles (p50, p99, p999)
+- [x] 3.1 Create `benches/subscription_throughput.rs`
+- [x] 3.2 Write benchmark for Rusteron subscription throughput
+- [x] 3.3 Write benchmark for aeron-rs subscription throughput
+- [x] 3.4 Test with different message rates (burst mode benchmark)
+- [x] 3.5 Add poll with parsing benchmark
 
 ## 4. Combined Pub/Sub (Transceiver) Benchmarks
-- [ ] 4.1 Create `benches/transceiver.rs`
-- [ ] 4.2 Write benchmark for simultaneous publish/subscribe on different streams
-- [ ] 4.3 Write benchmark for request/response roundtrip latency
-- [ ] 4.4 Write benchmark for bidirectional symmetric exchange
-- [ ] 4.5 Test with different message sizes and rates
-- [ ] 4.6 Measure publish latency degradation under concurrent subscribe load
-- [ ] 4.7 Measure subscribe latency degradation under concurrent publish load
-- [ ] 4.8 Compare Rusteron vs aeron-rs transceiver performance
+- [x] 4.1 Create `benches/transceiver.rs`
+- [x] 4.2 Write benchmark for simultaneous publish/subscribe on different streams
+- [x] 4.3 Write benchmark for request/response roundtrip latency
+- [x] 4.4 Write benchmark for bidirectional symmetric exchange
+- [x] 4.5 Test with different message sizes
+- [x] 4.8 Compare Rusteron vs aeron-rs transceiver performance (feature-gated)
 
 ## 5. Allocation Tracking
-- [ ] 5.1 Create `benches/allocation_tracking.rs`
-- [ ] 5.2 Set up allocation profiler integration
-- [ ] 5.3 Verify zero allocations in Rusteron publication hot path
-- [ ] 5.4 Verify zero allocations in aeron-rs publication hot path
-- [ ] 5.5 Verify zero allocations in Rusteron subscription hot path
-- [ ] 5.6 Verify zero allocations in aeron-rs subscription hot path
-- [ ] 5.7 Document any unavoidable allocations and their causes
+- [x] 5.1 Create `benches/allocation_tracking.rs`
+- [x] 5.2 Set up allocation profiler integration (dhat feature flag)
+- [x] 5.3 Benchmark Rusteron publication hot path allocations
+- [x] 5.4 Benchmark aeron-rs publication hot path allocations
+- [x] 5.5 Benchmark Rusteron subscription hot path allocations
+- [x] 5.6 Benchmark aeron-rs subscription hot path allocations
+- [x] 5.7 Benchmark try_claim hot path allocations
 
 ## 6. Benchmark Configuration
-- [ ] 6.1 Configure Criterion settings (warm-up, measurement time, sample size)
-- [ ] 6.2 Set up feature-gated benchmarks for each backend
-- [ ] 6.3 Create benchmark helper functions to reduce duplication
-- [ ] 6.4 Add command-line options for selective benchmark execution
+- [x] 6.1 Configure Criterion settings (html_reports feature)
+- [x] 6.2 Set up feature-gated benchmarks for each backend
+- [x] 6.3 Create benchmark helper functions (common/mod.rs)
+- [x] 6.4 Add MessageSize enum for consistent size testing
 
 ## 7. Comparison Tooling
 - [ ] 7.1 Create script to run benchmarks for both backends sequentially

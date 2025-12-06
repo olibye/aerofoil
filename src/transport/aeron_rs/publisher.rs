@@ -54,9 +54,7 @@ impl AeronPublisher for AeronRsPublisher {
         // aeron-rs try_claim populates a BufferClaim
         let mut buffer_claim = BufferClaim::default();
 
-        let result = self
-            .publication
-            .try_claim(length as i32, &mut buffer_claim);
+        let result = self.publication.try_claim(length as i32, &mut buffer_claim);
 
         match result {
             Ok(position) => {
@@ -67,10 +65,7 @@ impl AeronPublisher for AeronRsPublisher {
                 // Create a mutable slice from the AtomicBuffer
                 // Safety: The buffer is valid while the BufferClaim is held
                 let slice = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        buffer.buffer(),
-                        buffer.capacity() as usize,
-                    )
+                    std::slice::from_raw_parts_mut(buffer.buffer(), buffer.capacity() as usize)
                 };
 
                 Ok(ClaimBuffer::new(slice, position as i64))

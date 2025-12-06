@@ -9,7 +9,28 @@ rusteron-client = { version = "0.1", optional = true }
 rusteron-media-driver = { version = "0.1", optional = true }
 wingfoil = "0.1"
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+dhat = "0.3"
+
 [features]
 default = ["rusteron"]
 rusteron = ["rusteron-client", "rusteron-media-driver"]
 aeron-rs = ["dep:aeron-rs"]
+dhat-heap = []
+
+[[bench]]
+name = "publication_latency"
+harness = false
+
+[[bench]]
+name = "subscription_throughput"
+harness = false
+
+[[bench]]
+name = "transceiver"
+harness = false
+
+[[bench]]
+name = "allocation_tracking"
+harness = false
