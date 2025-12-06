@@ -1,7 +1,7 @@
 //! Subscription throughput benchmarks for Aeron transport.
 //!
 //! Measures the throughput of receiving messages comparing:
-//! - **bare**: Direct rusteron API calls (baseline)
+//! - **bare**: Direct API calls (baseline)
 //! - **aerofoil**: Calls through aerofoil's `AeronSubscriber` trait abstraction
 //!
 //! Note: Wingfoil nodes (`AeronSubscriberValueNode`, `AeronSubscriberValueRefNode`)
@@ -10,10 +10,9 @@
 
 mod common;
 
-#[cfg(feature = "rusteron")]
-use aerofoil::transport::AeronPublisher;
-use common::{MessageSize, CHANNEL};
+use common::MessageSize;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+#[cfg(feature = "rusteron")]
 use std::thread;
 use std::time::Duration;
 
@@ -21,105 +20,29 @@ use std::time::Duration;
 mod rusteron_bench {
     use super::*;
     use aerofoil::transport::rusteron::{RusteronPublisher, RusteronSubscriber};
-    use aerofoil::transport::AeronSubscriber;
-    use common::MediaDriverGuard;
-    use rusteron_client::IntoCString;
-
-    fn setup_pub_sub(
-        aeron: &rusteron_client::Aeron,
-        stream_id: i32,
-    ) -> (RusteronPublisher, RusteronSubscriber) {
-        let async_pub = aeron
-            .async_add_publication(&CHANNEL.into_c_string(), stream_id)
-            .expect("Failed to start publication");
-
-        let publication = async_pub
-            .poll_blocking(Duration::from_secs(5))
-            .expect("Failed to complete publication");
-
-        let publisher = RusteronPublisher::new(publication);
-
-        let async_sub = aeron
-            .async_add_subscription(
-                &CHANNEL.into_c_string(),
-                stream_id,
-                rusteron_client::Handlers::no_available_image_handler(),
-                rusteron_client::Handlers::no_unavailable_image_handler(),
-            )
-            .expect("Failed to start subscription");
-
-        let subscription = async_sub
-            .poll_blocking(Duration::from_secs(5))
-            .expect("Failed to complete subscription");
-
-        let subscriber = RusteronSubscriber::new(subscription);
-
-        thread::sleep(Duration::from_millis(100));
-
-        (publisher, subscriber)
-    }
-
-    /// Setup raw rusteron pub/sub without aerofoil wrappers.
-    fn setup_raw_pub_sub(
-        aeron: &rusteron_client::Aeron,
-        stream_id: i32,
-    ) -> (
-        rusteron_client::AeronPublication,
-        rusteron_client::AeronSubscription,
-    ) {
-        let async_pub = aeron
-            .async_add_publication(&CHANNEL.into_c_string(), stream_id)
-            .expect("Failed to start publication");
-
-        let publication = async_pub
-            .poll_blocking(Duration::from_secs(5))
-            .expect("Failed to complete publication");
-
-        let async_sub = aeron
-            .async_add_subscription(
-                &CHANNEL.into_c_string(),
-                stream_id,
-                rusteron_client::Handlers::no_available_image_handler(),
-                rusteron_client::Handlers::no_unavailable_image_handler(),
-            )
-            .expect("Failed to start subscription");
-
-        let subscription = async_sub
-            .poll_blocking(Duration::from_secs(5))
-            .expect("Failed to complete subscription");
-
-        thread::sleep(Duration::from_millis(100));
-
-        (publication, subscription)
-    }
+    use aerofoil::transport::{AeronPublisher, AeronSubscriber};
+    use common::rusteron_support::BenchContext;
 
     /// Run all rusteron subscription benchmarks with a single shared media driver.
     pub fn bench_all(c: &mut Criterion) {
-        let _driver = match MediaDriverGuard::start() {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Skipping benchmark: {}", e);
-                return;
-            }
+        let ctx = match BenchContext::new() {
+            Some(c) => c,
+            None => return,
         };
 
-        let context = rusteron_client::AeronContext::new().expect("Failed to create context");
-        let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
-        aeron.start().expect("Failed to start Aeron");
-
         // Bare rusteron benchmarks (baseline)
-        bench_poll_bare(c, &aeron);
+        bench_poll_bare(c, &ctx);
 
         // Aerofoil trait abstraction benchmarks
-        bench_poll_aerofoil(c, &aeron);
+        bench_poll_aerofoil(c, &ctx);
 
         // Additional benchmarks
-        bench_poll_with_parsing(c, &aeron);
-        bench_burst_throughput(c, &aeron);
+        bench_poll_with_parsing(c, &ctx);
+        bench_burst_throughput(c, &ctx);
     }
 
     /// Benchmark bare rusteron poll (baseline, no abstraction).
-    fn bench_poll_bare(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
+    fn bench_poll_bare(c: &mut Criterion, ctx: &BenchContext) {
         let mut group = c.benchmark_group("rusteron/poll/bare");
         group.warm_up_time(Duration::from_millis(500));
         group.measurement_time(Duration::from_secs(1));
@@ -127,8 +50,7 @@ mod rusteron_bench {
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
             let stream_id = 5000 + size.bytes() as i32;
-
-            let (publication, subscription) = setup_raw_pub_sub(aeron, stream_id);
+            let (publication, subscription) = ctx.add_pub_sub(stream_id);
 
             group.throughput(Throughput::Bytes(size.bytes() as u64));
 
@@ -158,7 +80,7 @@ mod rusteron_bench {
     }
 
     /// Benchmark aerofoil poll (with AeronSubscriber trait abstraction).
-    fn bench_poll_aerofoil(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
+    fn bench_poll_aerofoil(c: &mut Criterion, ctx: &BenchContext) {
         let mut group = c.benchmark_group("rusteron/poll/aerofoil");
         group.warm_up_time(Duration::from_millis(500));
         group.measurement_time(Duration::from_secs(1));
@@ -166,8 +88,10 @@ mod rusteron_bench {
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
             let stream_id = 5001 + size.bytes() as i32;
+            let (publication, subscription) = ctx.add_pub_sub(stream_id);
 
-            let (mut publisher, mut subscriber) = setup_pub_sub(aeron, stream_id);
+            let mut publisher = RusteronPublisher::new(publication);
+            let mut subscriber = RusteronSubscriber::new(subscription);
 
             group.throughput(Throughput::Bytes(size.bytes() as u64));
 
@@ -190,7 +114,7 @@ mod rusteron_bench {
     }
 
     /// Benchmark subscription with message parsing.
-    fn bench_poll_with_parsing(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
+    fn bench_poll_with_parsing(c: &mut Criterion, ctx: &BenchContext) {
         let mut group = c.benchmark_group("rusteron/poll_parse");
         group.warm_up_time(Duration::from_millis(500));
         group.measurement_time(Duration::from_secs(2));
@@ -198,8 +122,10 @@ mod rusteron_bench {
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
             let stream_id = 5101 + size.bytes() as i32;
+            let (publication, subscription) = ctx.add_pub_sub(stream_id);
 
-            let (mut publisher, mut subscriber) = setup_pub_sub(aeron, stream_id);
+            let mut publisher = RusteronPublisher::new(publication);
+            let mut subscriber = RusteronSubscriber::new(subscription);
 
             group.throughput(Throughput::Bytes(size.bytes() as u64));
 
@@ -230,7 +156,7 @@ mod rusteron_bench {
     }
 
     /// Benchmark burst subscription throughput.
-    fn bench_burst_throughput(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
+    fn bench_burst_throughput(c: &mut Criterion, ctx: &BenchContext) {
         let mut group = c.benchmark_group("rusteron/poll_burst");
         group.warm_up_time(Duration::from_millis(500));
         group.measurement_time(Duration::from_secs(2));
@@ -239,8 +165,10 @@ mod rusteron_bench {
 
         for size in [MessageSize::Small, MessageSize::Medium] {
             let stream_id = 5201 + size.bytes() as i32;
+            let (publication, subscription) = ctx.add_pub_sub(stream_id);
 
-            let (mut publisher, mut subscriber) = setup_pub_sub(aeron, stream_id);
+            let mut publisher = RusteronPublisher::new(publication);
+            let mut subscriber = RusteronSubscriber::new(subscription);
 
             group.throughput(Throughput::Elements(burst_size as u64));
 
@@ -275,42 +203,22 @@ mod rusteron_bench {
 #[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
 mod aeron_rs_bench {
     use super::*;
-    use aeron_rs::aeron::Aeron;
     use aeron_rs::concurrent::atomic_buffer::AtomicBuffer;
-    use aeron_rs::context::Context;
-    use common::MediaDriverGuard;
-    use std::ffi::CString;
+    use common::aeron_rs_support::BenchContext;
 
     /// Run all aeron-rs subscription benchmarks.
     pub fn bench_all(c: &mut Criterion) {
-        let _driver = match MediaDriverGuard::start() {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Skipping benchmark: {}", e);
-                return;
-            }
-        };
-
-        let context = Context::new();
-        let mut aeron = match Aeron::new(context) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!(
-                    "Failed to connect to Aeron media driver: {:?}\n\
-                     Ensure an external media driver is running:\n\
-                     java -cp aeron-all.jar io.aeron.driver.MediaDriver",
-                    e
-                );
-                return;
-            }
+        let mut ctx = match BenchContext::new() {
+            Some(c) => c,
+            None => return,
         };
 
         // Bare aeron-rs benchmarks (baseline)
-        bench_poll_bare(c, &mut aeron);
+        bench_poll_bare(c, &mut ctx);
     }
 
     /// Benchmark bare aeron-rs poll (baseline, no abstraction).
-    fn bench_poll_bare(c: &mut Criterion, aeron: &mut Aeron) {
+    fn bench_poll_bare(c: &mut Criterion, ctx: &mut BenchContext) {
         let mut group = c.benchmark_group("aeron-rs/poll/bare");
         group.warm_up_time(Duration::from_millis(500));
         group.measurement_time(Duration::from_secs(1));
@@ -318,42 +226,7 @@ mod aeron_rs_bench {
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
             let stream_id = 5000 + size.bytes() as i32;
-            let channel = CString::new(CHANNEL).expect("Invalid channel");
-
-            // Add publication
-            let pub_reg_id = match aeron.add_publication(channel.clone(), stream_id) {
-                Ok(id) => id,
-                Err(e) => {
-                    eprintln!("Failed to add publication: {:?}", e);
-                    return;
-                }
-            };
-
-            // Add subscription
-            let sub_reg_id = match aeron.add_subscription(channel, stream_id) {
-                Ok(id) => id,
-                Err(e) => {
-                    eprintln!("Failed to add subscription: {:?}", e);
-                    return;
-                }
-            };
-
-            // Poll until ready
-            let publication = loop {
-                match aeron.find_publication(pub_reg_id) {
-                    Ok(pub_arc) => break pub_arc,
-                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
-                }
-            };
-
-            let subscription = loop {
-                match aeron.find_subscription(sub_reg_id) {
-                    Ok(sub_arc) => break sub_arc,
-                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
-                }
-            };
-
-            thread::sleep(Duration::from_millis(100));
+            let (publication, subscription) = ctx.add_pub_sub(stream_id);
 
             group.throughput(Throughput::Bytes(size.bytes() as u64));
 

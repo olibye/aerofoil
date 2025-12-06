@@ -5,60 +5,41 @@
 //! with either rusteron or aeron-rs backend.
 //!
 //! Includes comparison between:
-//! - **bare**: Direct rusteron API calls (baseline)
+//! - **bare**: Direct API calls (baseline)
 //! - **aerofoil**: Calls through aerofoil's `AeronPublisher` trait abstraction
 
 mod common;
 
-#[cfg(feature = "rusteron")]
-use aerofoil::transport::AeronPublisher;
-use common::{MessageSize, CHANNEL};
+use common::MessageSize;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::thread;
 use std::time::Duration;
 
 #[cfg(feature = "rusteron")]
 mod rusteron_bench {
     use super::*;
     use aerofoil::transport::rusteron::RusteronPublisher;
-    use common::MediaDriverGuard;
-    use rusteron_client::IntoCString;
+    use aerofoil::transport::AeronPublisher;
+    use common::rusteron_support::BenchContext;
 
     /// Run all rusteron benchmarks with a single shared media driver.
     pub fn bench_all(c: &mut Criterion) {
-        let _driver = match MediaDriverGuard::start() {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Skipping benchmark: {}", e);
-                return;
-            }
+        let ctx = match BenchContext::new() {
+            Some(c) => c,
+            None => return,
         };
 
-        let context = rusteron_client::AeronContext::new().expect("Failed to create context");
-        let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
-        aeron.start().expect("Failed to start Aeron");
-
         // Bare rusteron benchmarks (baseline)
-        bench_offer_bare(c, &aeron);
+        bench_offer_bare(c, &ctx);
 
         // Aerofoil trait abstraction benchmarks
-        bench_offer_aerofoil(c, &aeron);
-        bench_offer_mut_aerofoil(c, &aeron);
-        bench_try_claim_aerofoil(c, &aeron);
+        bench_offer_aerofoil(c, &ctx);
+        bench_offer_mut_aerofoil(c, &ctx);
+        bench_try_claim_aerofoil(c, &ctx);
     }
 
     /// Benchmark bare rusteron offer (baseline, no abstraction).
-    fn bench_offer_bare(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
-        let stream_id = 2000;
-        let async_pub = aeron
-            .async_add_publication(&CHANNEL.into_c_string(), stream_id)
-            .expect("Failed to start publication");
-
-        let publication = async_pub
-            .poll_blocking(Duration::from_secs(5))
-            .expect("Failed to complete publication");
-
-        thread::sleep(Duration::from_millis(100));
+    fn bench_offer_bare(c: &mut Criterion, ctx: &BenchContext) {
+        let publication = ctx.add_publication(2000);
 
         let mut group = c.benchmark_group("rusteron/offer/bare");
         group.warm_up_time(Duration::from_millis(500));
@@ -91,19 +72,9 @@ mod rusteron_bench {
     }
 
     /// Benchmark aerofoil offer (with AeronPublisher trait abstraction).
-    fn bench_offer_aerofoil(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
-        let stream_id = 2001;
-        let async_pub = aeron
-            .async_add_publication(&CHANNEL.into_c_string(), stream_id)
-            .expect("Failed to start publication");
-
-        let publication = async_pub
-            .poll_blocking(Duration::from_secs(5))
-            .expect("Failed to complete publication");
-
+    fn bench_offer_aerofoil(c: &mut Criterion, ctx: &BenchContext) {
+        let publication = ctx.add_publication(2001);
         let mut publisher = RusteronPublisher::new(publication);
-
-        thread::sleep(Duration::from_millis(100));
 
         let mut group = c.benchmark_group("rusteron/offer/aerofoil");
         group.warm_up_time(Duration::from_millis(500));
@@ -129,19 +100,9 @@ mod rusteron_bench {
         group.finish();
     }
 
-    fn bench_offer_mut_aerofoil(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
-        let stream_id = 2002;
-        let async_pub = aeron
-            .async_add_publication(&CHANNEL.into_c_string(), stream_id)
-            .expect("Failed to start publication");
-
-        let publication = async_pub
-            .poll_blocking(Duration::from_secs(5))
-            .expect("Failed to complete publication");
-
+    fn bench_offer_mut_aerofoil(c: &mut Criterion, ctx: &BenchContext) {
+        let publication = ctx.add_publication(2002);
         let mut publisher = RusteronPublisher::new(publication);
-
-        thread::sleep(Duration::from_millis(100));
 
         let mut group = c.benchmark_group("rusteron/offer_mut/aerofoil");
         group.warm_up_time(Duration::from_millis(500));
@@ -162,19 +123,9 @@ mod rusteron_bench {
         group.finish();
     }
 
-    fn bench_try_claim_aerofoil(c: &mut Criterion, aeron: &rusteron_client::Aeron) {
-        let stream_id = 2003;
-        let async_pub = aeron
-            .async_add_publication(&CHANNEL.into_c_string(), stream_id)
-            .expect("Failed to start publication");
-
-        let publication = async_pub
-            .poll_blocking(Duration::from_secs(5))
-            .expect("Failed to complete publication");
-
+    fn bench_try_claim_aerofoil(c: &mut Criterion, ctx: &BenchContext) {
+        let publication = ctx.add_publication(2003);
         let mut publisher = RusteronPublisher::new(publication);
-
-        thread::sleep(Duration::from_millis(100));
 
         let mut group = c.benchmark_group("rusteron/try_claim/aerofoil");
         group.warm_up_time(Duration::from_millis(500));
@@ -205,64 +156,23 @@ mod rusteron_bench {
 #[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
 mod aeron_rs_bench {
     use super::*;
-    use aeron_rs::aeron::Aeron;
     use aeron_rs::concurrent::atomic_buffer::AtomicBuffer;
-    use aeron_rs::context::Context;
-    use common::MediaDriverGuard;
-    use std::ffi::CString;
+    use common::aeron_rs_support::BenchContext;
 
     /// Run all aeron-rs benchmarks.
     pub fn bench_all(c: &mut Criterion) {
-        let _driver = match MediaDriverGuard::start() {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Skipping benchmark: {}", e);
-                return;
-            }
-        };
-
-        let context = Context::new();
-        let mut aeron = match Aeron::new(context) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!(
-                    "Failed to connect to Aeron media driver: {:?}\n\
-                     Ensure an external media driver is running:\n\
-                     java -cp aeron-all.jar io.aeron.driver.MediaDriver",
-                    e
-                );
-                return;
-            }
+        let mut ctx = match BenchContext::new() {
+            Some(c) => c,
+            None => return,
         };
 
         // Bare aeron-rs benchmarks (baseline)
-        bench_offer_bare(c, &mut aeron);
+        bench_offer_bare(c, &mut ctx);
     }
 
     /// Benchmark bare aeron-rs offer (baseline, no abstraction).
-    fn bench_offer_bare(c: &mut Criterion, aeron: &mut Aeron) {
-        let stream_id = 2000;
-        let channel = CString::new(CHANNEL).expect("Invalid channel");
-
-        let registration_id = match aeron.add_publication(channel, stream_id) {
-            Ok(id) => id,
-            Err(e) => {
-                eprintln!("Failed to add publication: {:?}", e);
-                return;
-            }
-        };
-
-        // Poll until publication is ready
-        let publication = loop {
-            match aeron.find_publication(registration_id) {
-                Ok(pub_arc) => break pub_arc,
-                Err(_) => {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-            }
-        };
-
-        thread::sleep(Duration::from_millis(100));
+    fn bench_offer_bare(c: &mut Criterion, ctx: &mut BenchContext) {
+        let publication = ctx.add_publication(2000);
 
         let mut group = c.benchmark_group("aeron-rs/offer/bare");
         group.warm_up_time(Duration::from_millis(500));

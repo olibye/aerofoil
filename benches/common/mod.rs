@@ -17,13 +17,30 @@ pub struct MediaDriverGuard {
 }
 
 impl MediaDriverGuard {
-    /// Starts an embedded Aeron media driver.
+    /// Starts an embedded Aeron media driver, or uses an external one if AERON_EXTERNAL_DRIVER=1.
+    ///
+    /// Both rusteron and aeron-rs use the same embedded driver from rusteron-media-driver.
+    /// Set AERON_EXTERNAL_DRIVER=1 environment variable to skip embedded driver and use an
+    /// external one (e.g., Java media driver).
     ///
     /// # Errors
     ///
     /// Returns an error if the media driver cannot be started.
-    #[cfg(feature = "rusteron")]
+    #[cfg(any(feature = "rusteron", feature = "aeron-rs"))]
     pub fn start() -> Result<Self, String> {
+        // Check if user wants to use an external driver
+        if std::env::var("AERON_EXTERNAL_DRIVER").is_ok() {
+            eprintln!("Using external Aeron media driver (AERON_EXTERNAL_DRIVER is set)");
+            return Ok(MediaDriverGuard {
+                stop_signal: Arc::new(AtomicBool::new(false)),
+            });
+        }
+
+        Self::start_embedded()
+    }
+
+    #[cfg(any(feature = "rusteron", feature = "aeron-rs"))]
+    fn start_embedded() -> Result<Self, String> {
         use rusteron_media_driver::{AeronDriver, AeronDriverContext};
 
         // Clean up any stale Aeron state from previous runs
@@ -41,7 +58,8 @@ impl MediaDriverGuard {
         let driver_context = AeronDriverContext::new().map_err(|e| {
             format!(
                 "Failed to create media driver context: {:?}\n\
-                 Ensure Aeron C libraries are installed.",
+                 Ensure Aeron C libraries are installed, or set AERON_EXTERNAL_DRIVER=1 \
+                 and run an external media driver.",
                 e
             )
         })?;
@@ -61,20 +79,6 @@ impl MediaDriverGuard {
         thread::sleep(Duration::from_millis(200));
 
         Ok(MediaDriverGuard { stop_signal })
-    }
-
-    /// Starts a media driver for aeron-rs benchmarks.
-    ///
-    /// Note: aeron-rs requires an external media driver to be running.
-    /// This returns a dummy guard that assumes the driver is already running.
-    /// If no driver is available, connection will fail when creating publications.
-    #[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
-    pub fn start() -> Result<Self, String> {
-        // aeron-rs requires an external media driver - assume it's running
-        // Connection errors will surface when trying to create publications/subscriptions
-        Ok(MediaDriverGuard {
-            stop_signal: Arc::new(AtomicBool::new(false)),
-        })
     }
 
     #[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]
@@ -125,6 +129,202 @@ impl MessageSize {
             MessageSize::Small => "64B",
             MessageSize::Medium => "1KB",
             MessageSize::Large => "8KB",
+        }
+    }
+}
+
+// ============================================================================
+// Rusteron benchmark helpers
+// ============================================================================
+
+#[cfg(feature = "rusteron")]
+pub mod rusteron_support {
+    use super::*;
+    use rusteron_client::IntoCString;
+
+    /// Benchmark context holding the media driver and Aeron client.
+    ///
+    /// Use this to set up benchmarks with a single shared driver and client.
+    #[allow(dead_code)]
+    pub struct BenchContext {
+        pub driver: MediaDriverGuard,
+        pub aeron: rusteron_client::Aeron,
+    }
+
+    #[allow(dead_code)]
+    impl BenchContext {
+        /// Creates a new benchmark context with an embedded media driver and Aeron client.
+        pub fn new() -> Option<Self> {
+            let driver = match MediaDriverGuard::start() {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Skipping benchmark: {}", e);
+                    return None;
+                }
+            };
+
+            let context =
+                rusteron_client::AeronContext::new().expect("Failed to create Aeron context");
+            let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
+            aeron.start().expect("Failed to start Aeron");
+
+            Some(BenchContext { driver, aeron })
+        }
+
+        /// Adds a publication and waits for it to be ready.
+        pub fn add_publication(
+            &self,
+            stream_id: i32,
+        ) -> rusteron_client::AeronPublication {
+            let async_pub = self
+                .aeron
+                .async_add_publication(&CHANNEL.into_c_string(), stream_id)
+                .expect("Failed to start publication");
+
+            let publication = async_pub
+                .poll_blocking(Duration::from_secs(5))
+                .expect("Failed to complete publication");
+
+            thread::sleep(Duration::from_millis(100));
+            publication
+        }
+
+        /// Adds a subscription and waits for it to be ready.
+        pub fn add_subscription(
+            &self,
+            stream_id: i32,
+        ) -> rusteron_client::AeronSubscription {
+            let async_sub = self
+                .aeron
+                .async_add_subscription(
+                    &CHANNEL.into_c_string(),
+                    stream_id,
+                    rusteron_client::Handlers::no_available_image_handler(),
+                    rusteron_client::Handlers::no_unavailable_image_handler(),
+                )
+                .expect("Failed to start subscription");
+
+            let subscription = async_sub
+                .poll_blocking(Duration::from_secs(5))
+                .expect("Failed to complete subscription");
+
+            thread::sleep(Duration::from_millis(100));
+            subscription
+        }
+
+        /// Adds both a publication and subscription on the same stream.
+        pub fn add_pub_sub(
+            &self,
+            stream_id: i32,
+        ) -> (rusteron_client::AeronPublication, rusteron_client::AeronSubscription) {
+            let publication = self.add_publication(stream_id);
+            let subscription = self.add_subscription(stream_id);
+            (publication, subscription)
+        }
+    }
+}
+
+// ============================================================================
+// Aeron-rs benchmark helpers
+// ============================================================================
+
+#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
+pub mod aeron_rs_support {
+    use super::*;
+    use aeron_rs::aeron::Aeron;
+    use aeron_rs::context::Context;
+    use aeron_rs::publication::Publication;
+    use aeron_rs::subscription::Subscription;
+    use std::ffi::CString;
+    use std::sync::{Arc, Mutex};
+
+    /// Benchmark context holding the media driver and Aeron client.
+    ///
+    /// Use this to set up benchmarks with a single shared driver and client.
+    #[allow(dead_code)]
+    pub struct BenchContext {
+        pub driver: MediaDriverGuard,
+        pub aeron: Aeron,
+    }
+
+    #[allow(dead_code)]
+    impl BenchContext {
+        /// Creates a new benchmark context with an embedded media driver and Aeron client.
+        pub fn new() -> Option<Self> {
+            let driver = match MediaDriverGuard::start() {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Skipping benchmark: {}", e);
+                    return None;
+                }
+            };
+
+            let context = Context::new();
+            let aeron = match Aeron::new(context) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!(
+                        "Failed to connect to Aeron media driver: {:?}\n\
+                         Ensure the media driver started successfully.",
+                        e
+                    );
+                    return None;
+                }
+            };
+
+            Some(BenchContext { driver, aeron })
+        }
+
+        /// Adds a publication and waits for it to be ready.
+        pub fn add_publication(&mut self, stream_id: i32) -> Arc<Mutex<Publication>> {
+            let channel = CString::new(CHANNEL).expect("Invalid channel");
+
+            let registration_id = self
+                .aeron
+                .add_publication(channel, stream_id)
+                .expect("Failed to add publication");
+
+            // Poll until publication is ready
+            let publication = loop {
+                match self.aeron.find_publication(registration_id) {
+                    Ok(pub_arc) => break pub_arc,
+                    Err(_) => thread::sleep(Duration::from_millis(10)),
+                }
+            };
+
+            thread::sleep(Duration::from_millis(100));
+            publication
+        }
+
+        /// Adds a subscription and waits for it to be ready.
+        pub fn add_subscription(&mut self, stream_id: i32) -> Arc<Mutex<Subscription>> {
+            let channel = CString::new(CHANNEL).expect("Invalid channel");
+
+            let registration_id = self
+                .aeron
+                .add_subscription(channel, stream_id)
+                .expect("Failed to add subscription");
+
+            // Poll until subscription is ready
+            let subscription = loop {
+                match self.aeron.find_subscription(registration_id) {
+                    Ok(sub_arc) => break sub_arc,
+                    Err(_) => thread::sleep(Duration::from_millis(10)),
+                }
+            };
+
+            thread::sleep(Duration::from_millis(100));
+            subscription
+        }
+
+        /// Adds both a publication and subscription on the same stream.
+        pub fn add_pub_sub(
+            &mut self,
+            stream_id: i32,
+        ) -> (Arc<Mutex<Publication>>, Arc<Mutex<Subscription>>) {
+            let publication = self.add_publication(stream_id);
+            let subscription = self.add_subscription(stream_id);
+            (publication, subscription)
         }
     }
 }
