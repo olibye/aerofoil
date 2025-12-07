@@ -32,6 +32,14 @@ pub const ENTITY_CREATION_SLEEP_MS: u64 = 100;
 #[allow(dead_code)]
 pub const POLL_LOOP_SLEEP_MS: u64 = 10;
 
+/// Term buffer length (16 MB).
+#[allow(dead_code)]
+pub const TERM_BUFFER_LENGTH: usize = 16 * 1024 * 1024;
+
+/// Conductor/Client buffer length (1 MB).
+#[allow(dead_code)]
+pub const CONDUCTOR_BUFFER_LENGTH: usize = 1024 * 1024;
+
 /// RAII guard for managing Aeron media driver lifecycle in benchmarks.
 ///
 /// The media driver is automatically started on creation and stopped on drop,
@@ -93,6 +101,13 @@ impl MediaDriverGuard {
             .set_driver_timeout_ms(DRIVER_TIMEOUT_MS)
             .map_err(|e| format!("Failed to set driver timeout: {:?}", e))?;
 
+        // Explicitly set buffer lengths to ensure power-of-two capacities and consistency
+        driver_context
+            .set_term_buffer_length(TERM_BUFFER_LENGTH)
+            .map_err(|e| format!("Failed to set term buffer length: {:?}", e))?;
+        driver_context
+            .set_ipc_term_buffer_length(TERM_BUFFER_LENGTH)
+            .map_err(|e| format!("Failed to set ipc term buffer length: {:?}", e))?;
         let (stop_signal, _driver_handle) = AeronDriver::launch_embedded(driver_context, false);
 
         // Give the driver time to initialize
