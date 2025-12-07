@@ -64,14 +64,10 @@ impl MediaDriverGuard {
             )
         })?;
 
-        // Increase timeouts for benchmarks to avoid service interval exceeded errors
-        // Default is 10 seconds which is too short for longer benchmark runs
+        // Increase conductor timeout for benchmarks (30 seconds instead of 10)
         driver_context
-            .set_driver_timeout_ms(60_000) // 60 seconds driver timeout
+            .set_driver_timeout_ms(30_000)
             .map_err(|e| format!("Failed to set driver timeout: {:?}", e))?;
-        driver_context
-            .set_client_liveness_timeout_ns(60_000_000_000) // 60 seconds client liveness
-            .map_err(|e| format!("Failed to set client liveness timeout: {:?}", e))?;
 
         let (stop_signal, _driver_handle) = AeronDriver::launch_embedded(driver_context, false);
 
@@ -147,8 +143,8 @@ pub mod rusteron_support {
     /// Use this to set up benchmarks with a single shared driver and client.
     #[allow(dead_code)]
     pub struct BenchContext {
-        pub driver: MediaDriverGuard,
         pub aeron: rusteron_client::Aeron,
+        pub driver: MediaDriverGuard,
     }
 
     #[allow(dead_code)]
@@ -168,7 +164,7 @@ pub mod rusteron_support {
             let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
             aeron.start().expect("Failed to start Aeron");
 
-            Some(BenchContext { driver, aeron })
+            Some(BenchContext { aeron, driver })
         }
 
         /// Adds a publication and waits for it to be ready.
@@ -243,8 +239,8 @@ pub mod aeron_rs_support {
     /// Use this to set up benchmarks with a single shared driver and client.
     #[allow(dead_code)]
     pub struct BenchContext {
-        pub driver: MediaDriverGuard,
         pub aeron: Aeron,
+        pub driver: MediaDriverGuard,
     }
 
     #[allow(dead_code)]
@@ -272,7 +268,7 @@ pub mod aeron_rs_support {
                 }
             };
 
-            Some(BenchContext { driver, aeron })
+            Some(BenchContext { aeron, driver })
         }
 
         /// Adds a publication and waits for it to be ready.
