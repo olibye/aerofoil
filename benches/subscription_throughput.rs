@@ -22,6 +22,7 @@ mod rusteron_bench {
     use aerofoil::transport::rusteron::{RusteronPublisher, RusteronSubscriber};
     use aerofoil::transport::{AeronPublisher, AeronSubscriber};
     use common::rusteron_support::BenchContext;
+    use common::generic;
 
     /// Run all rusteron subscription benchmarks with a single shared media driver.
     pub fn bench_all(c: &mut Criterion) {
@@ -81,36 +82,12 @@ mod rusteron_bench {
 
     /// Benchmark aerofoil poll (with AeronSubscriber trait abstraction).
     fn bench_poll_aerofoil(c: &mut Criterion, ctx: &BenchContext) {
-        let mut group = c.benchmark_group("rusteron/poll/aerofoil");
-        group.warm_up_time(Duration::from_millis(500));
-        group.measurement_time(Duration::from_secs(1));
-        group.sample_size(10);
+        let stream_id = 5001;
+        let (publication, subscription) = ctx.add_pub_sub(stream_id);
 
-        for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let stream_id = 5001 + size.bytes() as i32;
-            let (publication, subscription) = ctx.add_pub_sub(stream_id);
-
-            let mut publisher = RusteronPublisher::new(publication);
-            let mut subscriber = RusteronSubscriber::new(subscription);
-
-            group.throughput(Throughput::Bytes(size.bytes() as u64));
-
-            group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
-                let buffer = size.create_buffer();
-
-                b.iter(|| {
-                    // Aerofoil publish
-                    let _ = publisher.offer(&buffer);
-
-                    // Aerofoil poll
-                    let count = subscriber.poll(|_fragment| Ok(())).unwrap_or(0);
-
-                    black_box(count)
-                });
-            });
-        }
-
-        group.finish();
+        let mut publisher = RusteronPublisher::new(publication);
+        let mut subscriber = RusteronSubscriber::new(subscription);
+        generic::bench_poll(c, &mut publisher, &mut subscriber, "rusteron");
     }
 
     /// Benchmark subscription with message parsing.
@@ -200,11 +177,13 @@ mod rusteron_bench {
     }
 }
 
-#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
+#[cfg(feature = "aeron-rs")]
 mod aeron_rs_bench {
     use super::*;
+    use aerofoil::transport::aeron_rs::{AeronRsPublisher, AeronRsSubscriber};
     use aeron_rs::concurrent::atomic_buffer::AtomicBuffer;
     use common::aeron_rs_support::BenchContext;
+    use common::generic;
 
     /// Run all aeron-rs subscription benchmarks.
     pub fn bench_all(c: &mut Criterion) {
@@ -215,6 +194,18 @@ mod aeron_rs_bench {
 
         // Bare aeron-rs benchmarks (baseline)
         bench_poll_bare(c, &mut ctx);
+
+        // Aerofoil trait abstraction benchmarks
+        bench_poll_aerofoil(c, &mut ctx);
+    }
+
+    fn bench_poll_aerofoil(c: &mut Criterion, ctx: &mut BenchContext) {
+        let stream_id = 5001;
+        let (publication, subscription) = ctx.add_pub_sub(stream_id);
+
+        let mut publisher = AeronRsPublisher::new(publication);
+        let mut subscriber = AeronRsSubscriber::new(subscription);
+        generic::bench_poll(c, &mut publisher, &mut subscriber, "aeron-rs");
     }
 
     /// Benchmark bare aeron-rs poll (baseline, no abstraction).
@@ -258,17 +249,20 @@ mod aeron_rs_bench {
 }
 
 #[cfg(feature = "rusteron")]
-criterion_group!(benches, rusteron_bench::bench_all);
+use rusteron_bench::bench_all as bench_rusteron;
 
-#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
-criterion_group!(benches, aeron_rs_bench::bench_all);
+#[cfg(feature = "aeron-rs")]
+use aeron_rs_bench::bench_all as bench_aeron_rs;
 
-#[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]
-fn no_backend(_c: &mut Criterion) {
+fn bench_wrapper(c: &mut Criterion) {
+    #[cfg(feature = "rusteron")]
+    bench_rusteron(c);
+    #[cfg(feature = "aeron-rs")]
+    bench_aeron_rs(c);
+    #[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]
     eprintln!("Benchmarks require 'rusteron' or 'aeron-rs' feature.");
 }
 
-#[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]
-criterion_group!(benches, no_backend);
+criterion_group!(benches, bench_wrapper);
 
 criterion_main!(benches);

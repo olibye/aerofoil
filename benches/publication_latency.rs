@@ -18,7 +18,7 @@ use std::time::Duration;
 mod rusteron_bench {
     use super::*;
     use aerofoil::transport::rusteron::RusteronPublisher;
-    use aerofoil::transport::AeronPublisher;
+    use common::generic;
     use common::rusteron_support::BenchContext;
 
     /// Run all rusteron benchmarks with a single shared media driver.
@@ -75,89 +75,29 @@ mod rusteron_bench {
     fn bench_offer_aerofoil(c: &mut Criterion, ctx: &BenchContext) {
         let publication = ctx.add_publication(2001);
         let mut publisher = RusteronPublisher::new(publication);
-
-        let mut group = c.benchmark_group("rusteron/offer/aerofoil");
-        group.warm_up_time(Duration::from_millis(500));
-        group.measurement_time(Duration::from_secs(2));
-        group.sample_size(20);
-
-        for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let buffer = size.create_buffer();
-            group.throughput(Throughput::Bytes(size.bytes() as u64));
-
-            group.bench_with_input(
-                BenchmarkId::from_parameter(size.name()),
-                &buffer,
-                |b, buf| {
-                    b.iter(|| {
-                        // Through aerofoil's AeronPublisher trait
-                        let _ = black_box(publisher.offer(black_box(buf)));
-                    });
-                },
-            );
-        }
-
-        group.finish();
+        generic::bench_offer(c, &mut publisher, "rusteron");
     }
 
     fn bench_offer_mut_aerofoil(c: &mut Criterion, ctx: &BenchContext) {
         let publication = ctx.add_publication(2002);
         let mut publisher = RusteronPublisher::new(publication);
-
-        let mut group = c.benchmark_group("rusteron/offer_mut/aerofoil");
-        group.warm_up_time(Duration::from_millis(500));
-        group.measurement_time(Duration::from_secs(2));
-        group.sample_size(20);
-
-        for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            group.throughput(Throughput::Bytes(size.bytes() as u64));
-
-            group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
-                let mut buffer = size.create_buffer();
-                b.iter(|| {
-                    let _ = black_box(publisher.offer_mut(black_box(&mut buffer)));
-                });
-            });
-        }
-
-        group.finish();
+        generic::bench_offer_mut(c, &mut publisher, "rusteron");
     }
 
     fn bench_try_claim_aerofoil(c: &mut Criterion, ctx: &BenchContext) {
         let publication = ctx.add_publication(2003);
         let mut publisher = RusteronPublisher::new(publication);
-
-        let mut group = c.benchmark_group("rusteron/try_claim/aerofoil");
-        group.warm_up_time(Duration::from_millis(500));
-        group.measurement_time(Duration::from_secs(2));
-        group.sample_size(20);
-
-        for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let data = size.create_buffer();
-            group.throughput(Throughput::Bytes(size.bytes() as u64));
-
-            group.bench_with_input(
-                BenchmarkId::from_parameter(size.name()),
-                &data,
-                |b, data| {
-                    b.iter(|| {
-                        if let Ok(mut claim) = publisher.try_claim(data.len()) {
-                            claim.copy_from_slice(data);
-                        }
-                    });
-                },
-            );
-        }
-
-        group.finish();
+        generic::bench_try_claim(c, &mut publisher, "rusteron");
     }
 }
 
-#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
+#[cfg(feature = "aeron-rs")]
 mod aeron_rs_bench {
     use super::*;
+    use aerofoil::transport::aeron_rs::AeronRsPublisher;
     use aeron_rs::concurrent::atomic_buffer::AtomicBuffer;
     use common::aeron_rs_support::BenchContext;
+    use common::generic;
 
     /// Run all aeron-rs benchmarks.
     pub fn bench_all(c: &mut Criterion) {
@@ -168,6 +108,22 @@ mod aeron_rs_bench {
 
         // Bare aeron-rs benchmarks (baseline)
         bench_offer_bare(c, &mut ctx);
+
+        // Aerofoil trait abstraction benchmarks
+        bench_offer_aerofoil(c, &mut ctx);
+        bench_offer_mut_aerofoil(c, &mut ctx);
+    }
+
+    fn bench_offer_aerofoil(c: &mut Criterion, ctx: &mut BenchContext) {
+        let publication = ctx.add_publication(2001);
+        let mut publisher = AeronRsPublisher::new(publication);
+        generic::bench_offer(c, &mut publisher, "aeron-rs");
+    }
+
+    fn bench_offer_mut_aerofoil(c: &mut Criterion, ctx: &mut BenchContext) {
+        let publication = ctx.add_publication(2002);
+        let mut publisher = AeronRsPublisher::new(publication);
+        generic::bench_offer_mut(c, &mut publisher, "aeron-rs");
     }
 
     /// Benchmark bare aeron-rs offer (baseline, no abstraction).
@@ -202,17 +158,20 @@ mod aeron_rs_bench {
 }
 
 #[cfg(feature = "rusteron")]
-criterion_group!(benches, rusteron_bench::bench_all);
+use rusteron_bench::bench_all as bench_rusteron;
 
-#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
-criterion_group!(benches, aeron_rs_bench::bench_all);
+#[cfg(feature = "aeron-rs")]
+use aeron_rs_bench::bench_all as bench_aeron_rs;
 
-#[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]
-fn no_backend(_c: &mut Criterion) {
+fn bench_wrapper(c: &mut Criterion) {
+    #[cfg(feature = "rusteron")]
+    bench_rusteron(c);
+    #[cfg(feature = "aeron-rs")]
+    bench_aeron_rs(c);
+    #[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]
     eprintln!("Benchmarks require 'rusteron' or 'aeron-rs' feature.");
 }
 
-#[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]
-criterion_group!(benches, no_backend);
+criterion_group!(benches, bench_wrapper);
 
 criterion_main!(benches);

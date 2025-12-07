@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+pub mod generic;
+
 /// RAII guard for managing Aeron media driver lifecycle in benchmarks.
 ///
 /// The media driver is automatically started on creation and stopped on drop,
@@ -228,7 +230,7 @@ pub mod rusteron_support {
 // Aeron-rs benchmark helpers
 // ============================================================================
 
-#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
+#[cfg(feature = "aeron-rs")]
 pub mod aeron_rs_support {
     use super::*;
     use aeron_rs::aeron::Aeron;

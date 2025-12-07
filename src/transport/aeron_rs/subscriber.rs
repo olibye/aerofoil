@@ -3,6 +3,7 @@
 use crate::transport::{AeronSubscriber, FragmentBuffer, FragmentHeader, TransportError};
 use aeron_rs::subscription::Subscription;
 use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 
 /// Aeron-rs based implementation of [`AeronSubscriber`].
 ///
@@ -21,12 +22,12 @@ use std::cell::RefCell;
 /// - May have different performance characteristics
 /// - See `add-transport-benchmarks` for comparison data
 pub struct AeronRsSubscriber {
-    subscription: Subscription,
+    subscription: Arc<Mutex<Subscription>>,
 }
 
 impl AeronRsSubscriber {
     /// Creates a new `AeronRsSubscriber` wrapping the given aeron-rs subscription.
-    pub fn new(subscription: Subscription) -> Self {
+    pub fn new(subscription: Arc<Mutex<Subscription>>) -> Self {
         AeronRsSubscriber { subscription }
     }
 }
@@ -75,7 +76,11 @@ impl AeronSubscriber for AeronRsSubscriber {
 
         // Poll the aeron-rs subscription with our adapter closure
         // fragment_limit: process 1 fragment per poll call (matches Rusteron behavior)
-        let count = self.subscription.poll(&mut fragment_handler, 1);
+        let count = self
+            .subscription
+            .lock()
+            .expect("Subscription mutex poisoned")
+            .poll(&mut fragment_handler, 1);
 
         // Check if handler returned an error
         if let Some(err) = error_cell.into_inner() {

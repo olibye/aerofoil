@@ -4,6 +4,7 @@ use crate::transport::{AeronPublisher, ClaimBuffer, TransportError};
 use aeron_rs::concurrent::atomic_buffer::AtomicBuffer;
 use aeron_rs::concurrent::logbuffer::buffer_claim::BufferClaim;
 use aeron_rs::publication::Publication;
+use std::sync::{Arc, Mutex};
 
 use super::error::result_to_transport_error;
 
@@ -24,12 +25,12 @@ use super::error::result_to_transport_error;
 /// - May have different performance characteristics
 /// - See `add-transport-benchmarks` for comparison data
 pub struct AeronRsPublisher {
-    publication: Publication,
+    publication: Arc<Mutex<Publication>>,
 }
 
 impl AeronRsPublisher {
     /// Creates a new `AeronRsPublisher` wrapping the given aeron-rs publication.
-    pub fn new(publication: Publication) -> Self {
+    pub fn new(publication: Arc<Mutex<Publication>>) -> Self {
         AeronRsPublisher { publication }
     }
 }
@@ -39,14 +40,22 @@ impl AeronPublisher for AeronRsPublisher {
         // aeron-rs requires &mut [u8], so we copy the immutable buffer
         let mut buffer_copy = buffer.to_vec();
         let atomic_buffer = AtomicBuffer::wrap_slice(&mut buffer_copy);
-        let result = self.publication.offer(atomic_buffer);
+        let result = self
+            .publication
+            .lock()
+            .expect("Publication mutex poisoned")
+            .offer(atomic_buffer);
         result_to_transport_error(result)
     }
 
     fn offer_mut(&mut self, buffer: &mut [u8]) -> Result<i64, TransportError> {
         // Zero-copy path: aeron-rs can use the mutable buffer directly
         let atomic_buffer = AtomicBuffer::wrap_slice(buffer);
-        let result = self.publication.offer(atomic_buffer);
+        let result = self
+            .publication
+            .lock()
+            .expect("Publication mutex poisoned")
+            .offer(atomic_buffer);
         result_to_transport_error(result)
     }
 
@@ -54,7 +63,11 @@ impl AeronPublisher for AeronRsPublisher {
         // aeron-rs try_claim populates a BufferClaim
         let mut buffer_claim = BufferClaim::default();
 
-        let result = self.publication.try_claim(length as i32, &mut buffer_claim);
+        let result = self
+            .publication
+            .lock()
+            .expect("Publication mutex poisoned")
+            .try_claim(length as i32, &mut buffer_claim);
 
         match result {
             Ok(position) => {
