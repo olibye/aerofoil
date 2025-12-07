@@ -8,6 +8,30 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+/// Timeout for the media driver in milliseconds.
+#[allow(dead_code)]
+pub const DRIVER_TIMEOUT_MS: u64 = 30_000;
+
+/// Sleep duration after starting the embedded media driver.
+#[allow(dead_code)]
+pub const DRIVER_INIT_SLEEP_MS: u64 = 200;
+
+/// Sleep duration before stopping the media driver.
+#[allow(dead_code)]
+pub const DRIVER_STOP_SLEEP_MS: u64 = 100;
+
+/// Timeout for blocking poll operations (publications/subscriptions).
+#[allow(dead_code)]
+pub const POLL_BLOCKING_TIMEOUT_SECS: u64 = 5;
+
+/// Sleep duration after creating a publication or subscription.
+#[allow(dead_code)]
+pub const ENTITY_CREATION_SLEEP_MS: u64 = 100;
+
+/// Sleep duration for polling loops in aeron-rs backend.
+#[allow(dead_code)]
+pub const POLL_LOOP_SLEEP_MS: u64 = 10;
+
 /// RAII guard for managing Aeron media driver lifecycle in benchmarks.
 ///
 /// The media driver is automatically started on creation and stopped on drop,
@@ -64,15 +88,15 @@ impl MediaDriverGuard {
             )
         })?;
 
-        // Increase conductor timeout for benchmarks (30 seconds instead of 10)
+        // Increase conductor timeout for benchmarks
         driver_context
-            .set_driver_timeout_ms(30_000)
+            .set_driver_timeout_ms(DRIVER_TIMEOUT_MS)
             .map_err(|e| format!("Failed to set driver timeout: {:?}", e))?;
 
         let (stop_signal, _driver_handle) = AeronDriver::launch_embedded(driver_context, false);
 
         // Give the driver time to initialize
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(DRIVER_INIT_SLEEP_MS));
 
         Ok(MediaDriverGuard { stop_signal })
     }
@@ -86,7 +110,7 @@ impl MediaDriverGuard {
 impl Drop for MediaDriverGuard {
     fn drop(&mut self) {
         self.stop_signal.store(true, Ordering::SeqCst);
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(DRIVER_STOP_SLEEP_MS));
     }
 }
 
@@ -178,10 +202,10 @@ pub mod rusteron_support {
                 .expect("Failed to start publication");
 
             let publication = async_pub
-                .poll_blocking(Duration::from_secs(5))
+                .poll_blocking(Duration::from_secs(POLL_BLOCKING_TIMEOUT_SECS))
                 .expect("Failed to complete publication");
 
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(Duration::from_millis(ENTITY_CREATION_SLEEP_MS));
             publication
         }
 
@@ -201,10 +225,10 @@ pub mod rusteron_support {
                 .expect("Failed to start subscription");
 
             let subscription = async_sub
-                .poll_blocking(Duration::from_secs(5))
+                .poll_blocking(Duration::from_secs(POLL_BLOCKING_TIMEOUT_SECS))
                 .expect("Failed to complete subscription");
 
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(Duration::from_millis(ENTITY_CREATION_SLEEP_MS));
             subscription
         }
 
@@ -284,11 +308,11 @@ pub mod aeron_rs_support {
             let publication = loop {
                 match self.aeron.find_publication(registration_id) {
                     Ok(pub_arc) => break pub_arc,
-                    Err(_) => thread::sleep(Duration::from_millis(10)),
+                    Err(_) => thread::sleep(Duration::from_millis(POLL_LOOP_SLEEP_MS)),
                 }
             };
 
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(Duration::from_millis(ENTITY_CREATION_SLEEP_MS));
             publication
         }
 
@@ -305,11 +329,11 @@ pub mod aeron_rs_support {
             let subscription = loop {
                 match self.aeron.find_subscription(registration_id) {
                     Ok(sub_arc) => break sub_arc,
-                    Err(_) => thread::sleep(Duration::from_millis(10)),
+                    Err(_) => thread::sleep(Duration::from_millis(POLL_LOOP_SLEEP_MS)),
                 }
             };
 
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(Duration::from_millis(ENTITY_CREATION_SLEEP_MS));
             subscription
         }
 
