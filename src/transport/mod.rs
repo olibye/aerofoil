@@ -1,8 +1,7 @@
 //! Aeron transport abstractions for message processing.
 //!
 //! This module provides trait-based abstractions for Aeron transport operations,
-//! enabling zero-cost polymorphism across different Aeron client implementations
-//! (Rusteron, aeron-rs) and mock implementations for testing.
+//! enabling zero-cost polymorphism across Rusteron and mock implementations for testing.
 
 pub mod buffer;
 pub mod error;
@@ -10,34 +9,20 @@ pub mod error;
 pub use buffer::{ClaimBuffer, FragmentBuffer, FragmentHeader};
 pub use error::TransportError;
 
-#[cfg(feature = "rusteron")]
 pub mod rusteron;
-
-#[cfg(feature = "aeron-rs")]
-pub mod aeron_rs;
 
 /// Publishes messages to an Aeron channel.
 ///
 /// This trait provides three publication methods:
 ///
-/// - [`offer`](AeronPublisher::offer): Accepts `&[u8]` (may copy internally on some backends)
-/// - [`offer_mut`](AeronPublisher::offer_mut): Accepts `&mut [u8]` (avoids copy on aeron-rs)
+/// - [`offer`](AeronPublisher::offer): Accepts `&[u8]`
+/// - [`offer_mut`](AeronPublisher::offer_mut): Accepts `&mut [u8]`
 /// - [`try_claim`](AeronPublisher::try_claim): Claim buffer for direct writing
-///
-/// # Choosing Between `offer` and `offer_mut`
-///
-/// Use `offer` when you have immutable data or prioritize convenience.
-/// Use `offer_mut` when you have a mutable buffer and want to avoid copies on aeron-rs.
 ///
 /// All methods are **guaranteed non-blocking** and will return immediately,
 /// even under back-pressure conditions.
 pub trait AeronPublisher {
     /// Offers a message to the publication.
-    ///
-    /// This method accepts an immutable buffer. On aeron-rs, this copies the buffer
-    /// internally since the backend requires mutable access. Use
-    /// [`offer_mut`](AeronPublisher::offer_mut) to avoid the copy when you have
-    /// a mutable buffer.
     ///
     /// # Returns
     ///
@@ -47,9 +32,6 @@ pub trait AeronPublisher {
     fn offer(&mut self, buffer: &[u8]) -> Result<i64, TransportError>;
 
     /// Offers a message to the publication with a mutable buffer.
-    ///
-    /// This method accepts a mutable buffer. On aeron-rs, this avoids the internal
-    /// copy that `offer` requires. On rusteron, behavior is identical to `offer`.
     ///
     /// # Returns
     ///

@@ -1,79 +1,56 @@
-# Dual Backend Support Design
+# Feature Simplification Design
 
 ## Context
-The project supports two Aeron client implementations:
+The project originally supported two Aeron client implementations via feature flags:
 - **rusteron**: C++ bindings via FFI, mature, production-ready
 - **aeron-rs**: Pure Rust implementation, no native dependencies
 
-Both share the same media driver (`rusteron-media-driver`) but currently cannot be compiled together due to `#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]` guards.
+During implementation, aeron-rs was found to be incompatible with the rusteron-media-driver due to ring buffer capacity validation differences, so aeron-rs support was removed entirely.
+
+Additionally, since there's only one backend now, the `rusteron` feature was removed and rusteron-client became a regular dependency.
 
 ## Goals
-- Enable simultaneous compilation of both backends
-- Allow benchmarks to compare both backends in a single run
-- Generate unified Criterion reports with side-by-side comparisons
+- Simplify dependency structure - rusteron is always available
+- Separate the embedded media driver into its own feature
+- Add support for external media drivers
 
 ## Non-Goals
-- Changing the transport trait API
-- Runtime backend selection (compile-time selection is preserved)
+- aeron-rs support (removed due to compatibility issues)
 
 ## Decisions
 
-### Decision: Remove mutual exclusivity constraint
-Simply change `#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]` to `#[cfg(feature = "aeron-rs")]` throughout the codebase.
+### Decision: Make rusteron-client a regular dependency
+Removed the `rusteron` feature flag since there's only one Aeron client implementation.
 
-**Rationale**: The mutual exclusivity was never technically required - both backends can coexist since they have distinct type names and share the media driver. Users can enable both with `--features rusteron,aeron-rs`.
+**Rationale**: With only one backend, the feature gate adds unnecessary complexity. Users always get rusteron-client.
 
 ### Decision: Separate embedded-driver feature
-Move `rusteron-media-driver` from `rusteron` and `aeron-rs` feature dependencies to a separate `embedded-driver` feature.
+Moved `rusteron-media-driver` to a separate `embedded-driver` feature.
 
-**Rationale**: The media driver is only used in tests and benchmarks (`tests/common/mod.rs`, `benches/common/mod.rs`). The library itself only needs the client to connect to an externally running driver. This separation:
+**Rationale**: The media driver is only used in tests and benchmarks. The library itself only needs the client to connect to an externally running driver. This separation:
 - Reduces dependency footprint for library users
 - Makes the distinction clear: client vs embedded driver
-- Allows users who run their own media driver (e.g., Java driver) to avoid compiling the C++ driver bindings
+- Allows users who run their own media driver to avoid compiling the C++ driver bindings
 
-### Decision: Unified benchmark groups with backend suffix
-Benchmark groups will use naming pattern `{backend}/{operation}` (e.g., `rusteron/offer`, `aeron-rs/offer`) enabling Criterion's comparison features.
+### Decision: Add external-driver feature
+Added `external-driver` feature for users who want to run with an external media driver (Java or C++ aeronmd).
 
-**Rationale**: Criterion can compare groups with similar names, making `--baseline` comparisons straightforward.
+## Final Feature Set
 
-### Decision: Shared MediaDriverGuard, separate Aeron clients
-Both backends will share the `MediaDriverGuard` (already the case) but maintain separate `BenchContext` types in their own modules.
+```toml
+[dependencies]
+rusteron-client = "0.1"
+rusteron-media-driver = { version = "0.1", optional = true }
+wingfoil = "0.1"
 
-**Rationale**: The media driver is backend-agnostic, but the Aeron client APIs differ significantly between rusteron and aeron-rs.
-
-## Risks / Trade-offs
-
-| Risk | Mitigation |
-|------|------------|
-| Stream ID conflicts between backends in same run | Use distinct stream ID ranges (rusteron: 1000-14999, aeron-rs: 17000-23999) |
-| Benchmark ordering affects results | Run backends in consistent order, document warm-up effects |
-| aeron-rs ring buffer incompatibility | aeron-rs benchmarks skip gracefully with helpful message |
-
-## Known Limitations
-
-### aeron-rs Ring Buffer Capacity
-aeron-rs v0.1.8 requires ring buffer capacities to be exact powers of two. The rusteron-media-driver adds 384 bytes of metadata to configured buffer sizes, resulting in capacities like 1048960 (1MB + 384) which fail aeron-rs's validation.
-
-**Impact**: aeron-rs cannot use the embedded rusteron-media-driver for benchmarks.
-
-**Workaround**: Use an external Java or C++ media driver:
-```bash
-# Start external media driver (in separate terminal)
-java -cp aeron-all.jar io.aeron.driver.MediaDriver
-
-# Run aeron-rs benchmarks with external driver
-AERON_EXTERNAL_DRIVER=1 cargo bench --features aeron-rs
-
-# Rusteron benchmarks (use embedded driver)
-cargo bench --features rusteron,embedded-driver
+[features]
+default = []
+embedded-driver = ["rusteron-media-driver"]
+external-driver = []
+dhat-heap = []
 ```
 
-When running with `--features rusteron,aeron-rs,embedded-driver`, rusteron benchmarks run successfully and aeron-rs benchmarks skip gracefully with a helpful message.
-
-## Migration Plan
-1. Update cfg guards to remove `not(feature = "rusteron")` conditions
-2. Update benchmarks to run both when both features enabled
-3. Document new workflow in README
-
-## Open Questions
-None - straightforward cfg gate simplification.
+## Usage
+- Library: `cargo build`
+- Benchmarks with embedded driver: `cargo bench --features embedded-driver`
+- Benchmarks with external driver: `cargo bench --features external-driver`

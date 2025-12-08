@@ -28,17 +28,9 @@ pub const POLL_BLOCKING_TIMEOUT_SECS: u64 = 5;
 #[allow(dead_code)]
 pub const ENTITY_CREATION_SLEEP_MS: u64 = 100;
 
-/// Sleep duration for polling loops in aeron-rs backend.
-#[allow(dead_code)]
-pub const POLL_LOOP_SLEEP_MS: u64 = 10;
-
 /// Term buffer length (16 MB).
 #[allow(dead_code)]
 pub const TERM_BUFFER_LENGTH: usize = 16 * 1024 * 1024;
-
-/// Conductor/Client buffer length (1 MB).
-#[allow(dead_code)]
-pub const CONDUCTOR_BUFFER_LENGTH: usize = 1024 * 1024;
 
 /// RAII guard for managing Aeron media driver lifecycle in benchmarks.
 ///
@@ -49,11 +41,7 @@ pub struct MediaDriverGuard {
 }
 
 impl MediaDriverGuard {
-    /// Starts an embedded Aeron media driver, or uses an external one if AERON_EXTERNAL_DRIVER=1.
-    ///
-    /// Both rusteron and aeron-rs use the same embedded driver from rusteron-media-driver.
-    /// Set AERON_EXTERNAL_DRIVER=1 environment variable to skip embedded driver and use an
-    /// external one (e.g., Java media driver).
+    /// Starts an embedded Aeron media driver, or uses an external one.
     ///
     /// # Errors
     ///
@@ -76,11 +64,9 @@ impl MediaDriverGuard {
         use rusteron_media_driver::{AeronDriver, AeronDriverContext};
 
         // Clean up any stale Aeron state from previous runs
-        // Default directory varies by platform: /dev/shm/aeron on Linux, /tmp/aeron-{user} on macOS
         if let Ok(aeron_dir) = std::env::var("AERON_DIR") {
             let _ = std::fs::remove_dir_all(&aeron_dir);
         } else {
-            // Try common default locations
             let _ = std::fs::remove_dir_all("/dev/shm/aeron");
             if let Ok(user) = std::env::var("USER") {
                 let _ = std::fs::remove_dir_all(format!("/tmp/aeron-{}", user));
@@ -96,30 +82,34 @@ impl MediaDriverGuard {
             )
         })?;
 
-        // Increase conductor timeout for benchmarks
         driver_context
             .set_driver_timeout_ms(DRIVER_TIMEOUT_MS)
             .map_err(|e| format!("Failed to set driver timeout: {:?}", e))?;
 
-        // Explicitly set buffer lengths to ensure power-of-two capacities and consistency
-        // aeron-rs is strict about requiring power-of-two capacities for ring buffers
         driver_context
             .set_term_buffer_length(TERM_BUFFER_LENGTH)
             .map_err(|e| format!("Failed to set term buffer length: {:?}", e))?;
         driver_context
             .set_ipc_term_buffer_length(TERM_BUFFER_LENGTH)
             .map_err(|e| format!("Failed to set ipc term buffer length: {:?}", e))?;
-        let (stop_signal, _driver_handle) = AeronDriver::launch_embedded(driver_context, false);
 
-        // Give the driver time to initialize
+        let (stop_signal, _driver_handle) = AeronDriver::launch_embedded(driver_context, false);
         thread::sleep(Duration::from_millis(DRIVER_INIT_SLEEP_MS));
 
         Ok(MediaDriverGuard { stop_signal })
     }
 
-    #[cfg(not(feature = "embedded-driver"))]
+    #[cfg(feature = "external-driver")]
     pub fn start() -> Result<Self, String> {
-        Err("Embedded driver feature not enabled. Enable 'embedded-driver' or set AERON_EXTERNAL_DRIVER=1.".to_string())
+        eprintln!("Using external Aeron media driver (external-driver feature enabled)");
+        Ok(MediaDriverGuard {
+            stop_signal: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    #[cfg(not(any(feature = "embedded-driver", feature = "external-driver")))]
+    pub fn start() -> Result<Self, String> {
+        Err("No driver feature enabled. Enable 'embedded-driver' or 'external-driver'.".to_string())
     }
 }
 
@@ -173,7 +163,6 @@ impl MessageSize {
 // Rusteron benchmark helpers
 // ============================================================================
 
-#[cfg(feature = "rusteron")]
 pub mod rusteron_support {
     use super::*;
     use rusteron_client::IntoCString;
@@ -253,200 +242,6 @@ pub mod rusteron_support {
             &self,
             stream_id: i32,
         ) -> (rusteron_client::AeronPublication, rusteron_client::AeronSubscription) {
-            let publication = self.add_publication(stream_id);
-            let subscription = self.add_subscription(stream_id);
-            (publication, subscription)
-        }
-    }
-}
-
-// ============================================================================
-// Aeron-rs benchmark helpers
-// ============================================================================
-
-#[cfg(feature = "aeron-rs")]
-pub mod aeron_rs_support {
-    use super::*;
-    use aeron_rs::aeron::Aeron;
-    use aeron_rs::context::Context;
-    use aeron_rs::publication::Publication;
-    use aeron_rs::subscription::Subscription;
-    use std::ffi::CString;
-    use std::sync::{Arc, Mutex};
-
-    /// Aeron directory for aeron-rs benchmarks (separate from rusteron to avoid buffer conflicts).
-    const AERON_RS_DIR: &str = "/tmp/aeron-rs-bench";
-
-    /// Benchmark context holding the media driver and Aeron client.
-    ///
-    /// Use this to set up benchmarks with a single shared driver and client.
-    /// Uses a separate Aeron directory from rusteron to avoid buffer compatibility issues.
-    #[allow(dead_code)]
-    pub struct BenchContext {
-        pub aeron: Aeron,
-        pub driver: AeronRsDriverGuard,
-    }
-
-    /// RAII guard for aeron-rs specific media driver.
-    /// Uses a separate directory to avoid buffer compatibility issues with rusteron.
-    pub struct AeronRsDriverGuard {
-        stop_signal: Arc<AtomicBool>,
-    }
-
-    impl AeronRsDriverGuard {
-        #[cfg(feature = "embedded-driver")]
-        pub fn start() -> Result<Self, String> {
-            use rusteron_media_driver::{AeronDriver, AeronDriverContext};
-
-            // Clean up aeron-rs specific directory
-            let _ = std::fs::remove_dir_all(AERON_RS_DIR);
-
-            let driver_context = AeronDriverContext::new().map_err(|e| {
-                format!("Failed to create media driver context: {:?}", e)
-            })?;
-
-            // Set aeron-rs specific directory
-            let aeron_dir = CString::new(AERON_RS_DIR).expect("Invalid aeron dir");
-            driver_context
-                .set_dir(&aeron_dir)
-                .map_err(|e| format!("Failed to set aeron dir: {:?}", e))?;
-
-            driver_context
-                .set_driver_timeout_ms(DRIVER_TIMEOUT_MS)
-                .map_err(|e| format!("Failed to set driver timeout: {:?}", e))?;
-
-            driver_context
-                .set_term_buffer_length(TERM_BUFFER_LENGTH)
-                .map_err(|e| format!("Failed to set term buffer length: {:?}", e))?;
-            driver_context
-                .set_ipc_term_buffer_length(TERM_BUFFER_LENGTH)
-                .map_err(|e| format!("Failed to set ipc term buffer length: {:?}", e))?;
-
-            let (stop_signal, _driver_handle) = AeronDriver::launch_embedded(driver_context, false);
-            thread::sleep(Duration::from_millis(DRIVER_INIT_SLEEP_MS));
-
-            Ok(AeronRsDriverGuard { stop_signal })
-        }
-
-        #[cfg(not(feature = "embedded-driver"))]
-        pub fn start() -> Result<Self, String> {
-            Err("Embedded driver feature not enabled.".to_string())
-        }
-    }
-
-    impl Drop for AeronRsDriverGuard {
-        fn drop(&mut self) {
-            self.stop_signal.store(true, Ordering::SeqCst);
-            thread::sleep(Duration::from_millis(DRIVER_STOP_SLEEP_MS));
-        }
-    }
-
-    #[allow(dead_code)]
-    impl BenchContext {
-        /// Creates a new benchmark context with an embedded media driver and Aeron client.
-        /// Uses a separate Aeron directory to avoid buffer compatibility issues with rusteron.
-        pub fn new() -> Option<Self> {
-            let driver = match AeronRsDriverGuard::start() {
-                Ok(d) => d,
-                Err(e) => {
-                    eprintln!("Skipping aeron-rs benchmark: {}", e);
-                    return None;
-                }
-            };
-
-            let mut context = Context::new();
-            context.set_aeron_dir(AERON_RS_DIR.to_string());
-
-            // Use catch_unwind because aeron-rs panics on buffer compatibility issues
-            // instead of returning an error
-            let aeron_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                Aeron::new(context)
-            }));
-
-            let aeron = match aeron_result {
-                Ok(Ok(a)) => a,
-                Ok(Err(e)) => {
-                    eprintln!(
-                        "Failed to connect to Aeron media driver: {:?}\n\
-                         Ensure the media driver started successfully.",
-                        e
-                    );
-                    return None;
-                }
-                Err(panic_info) => {
-                    let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-                        s.to_string()
-                    } else if let Some(s) = panic_info.downcast_ref::<String>() {
-                        s.clone()
-                    } else {
-                        "Unknown panic".to_string()
-                    };
-
-                    if panic_msg.contains("CapacityIsNotTwoPower") {
-                        eprintln!(
-                            "Skipping aeron-rs benchmarks: ring buffer capacity incompatibility.\n\
-                             The rusteron-media-driver creates buffers with metadata overhead that \n\
-                             results in non-power-of-two capacities, which aeron-rs doesn't support.\n\
-                             To run aeron-rs benchmarks, start an external Java/C++ media driver and set:\n\
-                             AERON_EXTERNAL_DRIVER=1 cargo bench --features aeron-rs"
-                        );
-                    } else {
-                        eprintln!("aeron-rs panicked during initialization: {}", panic_msg);
-                    }
-                    return None;
-                }
-            };
-
-            Some(BenchContext { aeron, driver })
-        }
-
-        /// Adds a publication and waits for it to be ready.
-        pub fn add_publication(&mut self, stream_id: i32) -> Arc<Mutex<Publication>> {
-            let channel = CString::new(CHANNEL).expect("Invalid channel");
-
-            let registration_id = self
-                .aeron
-                .add_publication(channel, stream_id)
-                .expect("Failed to add publication");
-
-            // Poll until publication is ready
-            let publication = loop {
-                match self.aeron.find_publication(registration_id) {
-                    Ok(pub_arc) => break pub_arc,
-                    Err(_) => thread::sleep(Duration::from_millis(POLL_LOOP_SLEEP_MS)),
-                }
-            };
-
-            thread::sleep(Duration::from_millis(ENTITY_CREATION_SLEEP_MS));
-            publication
-        }
-
-        /// Adds a subscription and waits for it to be ready.
-        pub fn add_subscription(&mut self, stream_id: i32) -> Arc<Mutex<Subscription>> {
-            let channel = CString::new(CHANNEL).expect("Invalid channel");
-
-            let registration_id = self
-                .aeron
-                .add_subscription(channel, stream_id)
-                .expect("Failed to add subscription");
-
-            // Poll until subscription is ready
-            let subscription = loop {
-                match self.aeron.find_subscription(registration_id) {
-                    Ok(sub_arc) => break sub_arc,
-                    Err(_) => thread::sleep(Duration::from_millis(POLL_LOOP_SLEEP_MS)),
-                }
-            };
-
-            thread::sleep(Duration::from_millis(ENTITY_CREATION_SLEEP_MS));
-            subscription
-        }
-
-        /// Adds both a publication and subscription on the same stream.
-        pub fn add_pub_sub(
-            &mut self,
-            stream_id: i32,
-        ) -> (Arc<Mutex<Publication>>, Arc<Mutex<Subscription>>) {
             let publication = self.add_publication(stream_id);
             let subscription = self.add_subscription(stream_id);
             (publication, subscription)

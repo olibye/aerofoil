@@ -1,10 +1,7 @@
 use std::process::Command;
 
 fn main() {
-    // Only provide Aeron info if rusteron feature is enabled
-    if cfg!(feature = "rusteron") {
-        check_aeron_availability();
-    }
+    check_aeron_availability();
 }
 
 fn check_aeron_availability() {
