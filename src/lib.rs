@@ -13,10 +13,9 @@
 //!
 //! # Publishing Methods
 //!
-//! The [`AeronPublisher`](transport::AeronPublisher) trait provides multiple offer methods:
+//! The [`AeronPublisher`](transport::AeronPublisher) trait provides:
 //!
-//! - `offer(&[u8])`: Accepts immutable buffer
-//! - `offer_mut(&mut [u8])`: Accepts mutable buffer
+//! - `offer(&[u8])`: Publish a message
 //! - `try_claim(len)`: Claim buffer for zero-copy writing
 //!
 //! # Architecture

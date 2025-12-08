@@ -13,10 +13,9 @@ pub mod rusteron;
 
 /// Publishes messages to an Aeron channel.
 ///
-/// This trait provides three publication methods:
+/// This trait provides two publication methods:
 ///
 /// - [`offer`](AeronPublisher::offer): Accepts `&[u8]`
-/// - [`offer_mut`](AeronPublisher::offer_mut): Accepts `&mut [u8]`
 /// - [`try_claim`](AeronPublisher::try_claim): Claim buffer for direct writing
 ///
 /// All methods are **guaranteed non-blocking** and will return immediately,
@@ -30,15 +29,6 @@ pub trait AeronPublisher {
     /// - `Err(TransportError::BackPressure)` - Buffer is full, retry later
     /// - `Err(_)` - Other transport error occurred
     fn offer(&mut self, buffer: &[u8]) -> Result<i64, TransportError>;
-
-    /// Offers a message to the publication with a mutable buffer.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(position)` - The stream position where the message was published
-    /// - `Err(TransportError::BackPressure)` - Buffer is full, retry later
-    /// - `Err(_)` - Other transport error occurred
-    fn offer_mut(&mut self, buffer: &mut [u8]) -> Result<i64, TransportError>;
 
     /// Claims a buffer for zero-copy message writing.
     ///

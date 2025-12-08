@@ -1,7 +1,7 @@
 //! Publication latency benchmarks for Aeron transport.
 //!
-//! Measures the latency of publishing messages using the `offer` and `offer_mut`
-//! methods across different message sizes.
+//! Measures the latency of publishing messages using the `offer` method
+//! across different message sizes.
 //!
 //! Includes comparison between:
 //! - **bare**: Direct API calls (baseline)
@@ -28,7 +28,6 @@ fn bench_all(c: &mut Criterion) {
 
     // Aerofoil trait abstraction benchmarks
     bench_offer_aerofoil(c, &ctx);
-    bench_offer_mut_aerofoil(c, &ctx);
     bench_try_claim_aerofoil(c, &ctx);
 }
 
@@ -89,29 +88,6 @@ fn bench_offer_aerofoil(c: &mut Criterion, ctx: &BenchContext) {
                 });
             },
         );
-    }
-
-    group.finish();
-}
-
-fn bench_offer_mut_aerofoil(c: &mut Criterion, ctx: &BenchContext) {
-    let publication = ctx.add_publication(2002);
-    let mut publisher = RusteronPublisher::new(publication);
-
-    let mut group = c.benchmark_group("offer_mut/aerofoil");
-    group.warm_up_time(Duration::from_millis(500));
-    group.measurement_time(Duration::from_secs(2));
-    group.sample_size(20);
-
-    for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-        group.throughput(Throughput::Bytes(size.bytes() as u64));
-
-        group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
-            let mut buffer = size.create_buffer();
-            b.iter(|| {
-                let _ = black_box(publisher.offer_mut(black_box(&mut buffer)));
-            });
-        });
     }
 
     group.finish();

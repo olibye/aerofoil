@@ -45,31 +45,6 @@ fn bench_publication_allocations(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark publication hot path allocations with mutable buffer.
-fn bench_publication_mut_allocations(c: &mut Criterion) {
-    let ctx = match BenchContext::new() {
-        Some(c) => c,
-        None => return,
-    };
-
-    let mut group = c.benchmark_group("allocations/publication_mut");
-
-    for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-        let stream_id = 12001 + size.bytes() as i32;
-        let publication = ctx.add_publication(stream_id);
-        let mut publisher = RusteronPublisher::new(publication);
-
-        group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
-            let mut buffer = size.create_buffer();
-            b.iter(|| {
-                let _ = publisher.offer_mut(&mut buffer);
-            });
-        });
-    }
-
-    group.finish();
-}
-
 /// Benchmark subscription hot path allocations.
 fn bench_subscription_allocations(c: &mut Criterion) {
     let ctx = match BenchContext::new() {
@@ -135,7 +110,6 @@ fn bench_try_claim_allocations(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_publication_allocations,
-    bench_publication_mut_allocations,
     bench_subscription_allocations,
     bench_try_claim_allocations
 );
