@@ -23,7 +23,7 @@ Rust library providing wingfoil aeron adapters
 - Use idiomatic rust cargo examples instead of examples in modules
 - Prefer simple functions to macros where possible
 - Factor out common code into helper functions and classes even for tests
-
+- Minimise dependencies where possible
 ### Documentation Conventions
 - Document design decisions using unit test cases
 - Document latency compromises between rusteron and aeron-rs
@@ -43,7 +43,7 @@ Rust library providing wingfoil aeron adapters
 - A Node's cycle function should only output true if there's a new value.
 
 ### Lessons learned
-- Document lessons learned in @openspec/lessons-learned/ consider these lessos in future designs
+- Document lessons learned in @openspec/lessons-learned/ consider these lessons in future designs
 
 ### Code Style
 - Idiomatic Rust patterns
