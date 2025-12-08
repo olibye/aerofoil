@@ -40,6 +40,9 @@ pub const TERM_BUFFER_LENGTH: usize = 16 * 1024 * 1024;
 #[allow(dead_code)]
 pub const CONDUCTOR_BUFFER_LENGTH: usize = 1024 * 1024;
 
+/// Aeron directory path for benchmarks.
+pub const AERON_DIR_PATH: &str = "target/aeron-bench";
+
 /// RAII guard for managing Aeron media driver lifecycle in benchmarks.
 ///
 /// The media driver is automatically started on creation and stopped on drop,
@@ -75,17 +78,8 @@ impl MediaDriverGuard {
     fn start_embedded() -> Result<Self, String> {
         use rusteron_media_driver::{AeronDriver, AeronDriverContext};
 
-        // Clean up any stale Aeron state from previous runs
-        // Default directory varies by platform: /dev/shm/aeron on Linux, /tmp/aeron-{user} on macOS
-        if let Ok(aeron_dir) = std::env::var("AERON_DIR") {
-            let _ = std::fs::remove_dir_all(&aeron_dir);
-        } else {
-            // Try common default locations
-            let _ = std::fs::remove_dir_all("/dev/shm/aeron");
-            if let Ok(user) = std::env::var("USER") {
-                let _ = std::fs::remove_dir_all(format!("/tmp/aeron-{}", user));
-            }
-        }
+        // Use a local target directory to avoid stale state from system locations
+        let _ = std::fs::remove_dir_all(AERON_DIR_PATH);
 
         let driver_context = AeronDriverContext::new().map_err(|e| {
             format!(
@@ -95,6 +89,11 @@ impl MediaDriverGuard {
                 e
             )
         })?;
+
+        let aeron_dir_c = std::ffi::CString::new(AERON_DIR_PATH).unwrap();
+        driver_context
+            .set_dir(&aeron_dir_c)
+            .map_err(|e| format!("Failed to set dir: {:?}", e))?;
 
         // Increase conductor timeout for benchmarks
         driver_context
@@ -200,6 +199,9 @@ pub mod rusteron_support {
 
             let context =
                 rusteron_client::AeronContext::new().expect("Failed to create Aeron context");
+            context
+                .set_dir(&AERON_DIR_PATH.into_c_string())
+                .expect("Failed to set dir");
             let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
             aeron.start().expect("Failed to start Aeron");
 
@@ -294,7 +296,8 @@ pub mod aeron_rs_support {
                 }
             };
 
-            let context = Context::new();
+            let mut context = Context::new();
+            context.set_aeron_dir(AERON_DIR_PATH.to_string());
             let aeron = match Aeron::new(context) {
                 Ok(a) => a,
                 Err(e) => {
