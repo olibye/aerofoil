@@ -41,6 +41,7 @@ impl MediaDriverGuard {
     /// # Example
     ///
     /// See `tests/summing_node_test.rs` for usage in a complete integration test.
+    #[cfg(feature = "embedded-driver")]
     pub fn start() -> Result<Self, String> {
         use rusteron_media_driver::{AeronDriver, AeronDriverContext};
 
@@ -65,6 +66,11 @@ impl MediaDriverGuard {
         thread::sleep(Duration::from_millis(200));
 
         Ok(MediaDriverGuard { stop_signal })
+    }
+
+    #[cfg(not(feature = "embedded-driver"))]
+    pub fn start() -> Result<Self, String> {
+        Err("Embedded driver feature not enabled. Enable 'embedded-driver' feature.".to_string())
     }
 }
 

@@ -58,7 +58,7 @@ impl MediaDriverGuard {
     /// # Errors
     ///
     /// Returns an error if the media driver cannot be started.
-    #[cfg(any(feature = "rusteron", feature = "aeron-rs"))]
+    #[cfg(feature = "embedded-driver")]
     pub fn start() -> Result<Self, String> {
         // Check if user wants to use an external driver
         if std::env::var("AERON_EXTERNAL_DRIVER").is_ok() {
@@ -71,7 +71,7 @@ impl MediaDriverGuard {
         Self::start_embedded()
     }
 
-    #[cfg(any(feature = "rusteron", feature = "aeron-rs"))]
+    #[cfg(feature = "embedded-driver")]
     fn start_embedded() -> Result<Self, String> {
         use rusteron_media_driver::{AeronDriver, AeronDriverContext};
 
@@ -116,9 +116,9 @@ impl MediaDriverGuard {
         Ok(MediaDriverGuard { stop_signal })
     }
 
-    #[cfg(not(any(feature = "rusteron", feature = "aeron-rs")))]
+    #[cfg(not(feature = "embedded-driver"))]
     pub fn start() -> Result<Self, String> {
-        Err("No Aeron backend feature enabled. Enable 'rusteron' or 'aeron-rs'.".to_string())
+        Err("Embedded driver feature not enabled. Enable 'embedded-driver' or set AERON_EXTERNAL_DRIVER=1.".to_string())
     }
 }
 
@@ -263,7 +263,7 @@ pub mod rusteron_support {
 // Aeron-rs benchmark helpers
 // ============================================================================
 
-#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
+#[cfg(feature = "aeron-rs")]
 pub mod aeron_rs_support {
     use super::*;
     use aeron_rs::aeron::Aeron;

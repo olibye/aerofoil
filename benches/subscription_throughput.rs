@@ -200,7 +200,7 @@ mod rusteron_bench {
     }
 }
 
-#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
+#[cfg(feature = "aeron-rs")]
 mod aeron_rs_bench {
     use super::*;
     use aeron_rs::concurrent::atomic_buffer::AtomicBuffer;
@@ -225,7 +225,8 @@ mod aeron_rs_bench {
         group.sample_size(10);
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let stream_id = 5000 + size.bytes() as i32;
+            // Use stream IDs in 6000+ range to avoid conflicts with rusteron (5000-5999)
+            let stream_id = 6000 + size.bytes() as i32;
             let (publication, subscription) = ctx.add_pub_sub(stream_id);
 
             group.throughput(Throughput::Bytes(size.bytes() as u64));
@@ -257,9 +258,15 @@ mod aeron_rs_bench {
     }
 }
 
-#[cfg(feature = "rusteron")]
+// When both features enabled, run both benchmark suites
+#[cfg(all(feature = "rusteron", feature = "aeron-rs"))]
+criterion_group!(benches, rusteron_bench::bench_all, aeron_rs_bench::bench_all);
+
+// When only rusteron enabled
+#[cfg(all(feature = "rusteron", not(feature = "aeron-rs")))]
 criterion_group!(benches, rusteron_bench::bench_all);
 
+// When only aeron-rs enabled
 #[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
 criterion_group!(benches, aeron_rs_bench::bench_all);
 

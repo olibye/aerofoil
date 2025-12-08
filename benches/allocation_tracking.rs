@@ -137,7 +137,7 @@ mod rusteron_bench {
     }
 }
 
-#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
+#[cfg(feature = "aeron-rs")]
 mod aeron_rs_bench {
     use super::*;
     use aeron_rs::concurrent::atomic_buffer::AtomicBuffer;
@@ -153,7 +153,8 @@ mod aeron_rs_bench {
         let mut group = c.benchmark_group("aeron-rs/allocations/publication");
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let stream_id = 11001 + size.bytes() as i32;
+            // Use stream IDs in 21000+ range to avoid conflicts with rusteron (11000-14999)
+            let stream_id = 21001 + size.bytes() as i32;
             let publication = ctx.add_publication(stream_id);
 
             group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
@@ -180,7 +181,8 @@ mod aeron_rs_bench {
         let mut group = c.benchmark_group("aeron-rs/allocations/subscription");
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let stream_id = 13001 + size.bytes() as i32;
+            // Use stream IDs in 23000+ range to avoid conflicts with rusteron (13000-13999)
+            let stream_id = 23001 + size.bytes() as i32;
             let (publication, subscription) = ctx.add_pub_sub(stream_id);
 
             // Pre-publish some messages
@@ -204,7 +206,20 @@ mod aeron_rs_bench {
     }
 }
 
-#[cfg(feature = "rusteron")]
+// When both features enabled, run both benchmark suites
+#[cfg(all(feature = "rusteron", feature = "aeron-rs"))]
+criterion_group!(
+    benches,
+    rusteron_bench::bench_publication_allocations,
+    rusteron_bench::bench_publication_mut_allocations,
+    rusteron_bench::bench_subscription_allocations,
+    rusteron_bench::bench_try_claim_allocations,
+    aeron_rs_bench::bench_publication_allocations,
+    aeron_rs_bench::bench_subscription_allocations
+);
+
+// When only rusteron enabled
+#[cfg(all(feature = "rusteron", not(feature = "aeron-rs")))]
 criterion_group!(
     benches,
     rusteron_bench::bench_publication_allocations,
@@ -213,6 +228,7 @@ criterion_group!(
     rusteron_bench::bench_try_claim_allocations
 );
 
+// When only aeron-rs enabled
 #[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
 criterion_group!(
     benches,

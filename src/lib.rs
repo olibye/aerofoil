@@ -8,8 +8,9 @@
 //!
 //! - **`rusteron`** (default): Enables Rusteron adapter (requires C++ toolchain)
 //! - **`aeron-rs`**: Enables pure Rust aeron-rs adapter (no C++ toolchain required)
+//! - **`embedded-driver`**: Enables embedded media driver for tests/benchmarks
 //!
-//! Note: `rusteron` and `aeron-rs` features are mutually exclusive.
+//! Both `rusteron` and `aeron-rs` can be enabled simultaneously for benchmarking comparisons.
 //!
 //! # Choosing a Backend
 //!
@@ -23,6 +24,7 @@
 //!
 //! Use `rusteron` (default) for production deployments with established toolchains.
 //! Use `aeron-rs` for pure Rust builds or simpler cross-compilation.
+//! Enable both with `--features rusteron,aeron-rs` for benchmark comparisons.
 //!
 //! # Publishing Methods
 //!
@@ -39,10 +41,6 @@
 //!
 //! - [`transport`]: Trait-based transport abstractions and Aeron client adapters
 //! - [`nodes`]: Wingfoil node implementations for Aeron integration
-
-// Compile-time check: rusteron and aeron-rs features are mutually exclusive
-#[cfg(all(feature = "rusteron", feature = "aeron-rs"))]
-compile_error!("Cannot enable both 'rusteron' and 'aeron-rs' features. Choose one backend.");
 
 pub mod nodes;
 pub mod transport;

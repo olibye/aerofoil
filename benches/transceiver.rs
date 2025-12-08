@@ -168,7 +168,7 @@ mod rusteron_bench {
     }
 }
 
-#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
+#[cfg(feature = "aeron-rs")]
 mod aeron_rs_bench {
     use super::*;
     use aeron_rs::concurrent::atomic_buffer::AtomicBuffer;
@@ -184,8 +184,9 @@ mod aeron_rs_bench {
         let mut group = c.benchmark_group("aeron-rs/transceiver/simultaneous");
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-            let publication = ctx.add_publication(7001);
-            let subscription = ctx.add_subscription(7002);
+            // Use stream IDs in 17000+ range to avoid conflicts with rusteron (7000-7999)
+            let publication = ctx.add_publication(17001);
+            let subscription = ctx.add_subscription(17002);
 
             group.throughput(Throughput::Bytes(size.bytes() as u64 * 2));
 
@@ -225,12 +226,13 @@ mod aeron_rs_bench {
 
         for size in [MessageSize::Small, MessageSize::Medium] {
             // Client: publishes requests, subscribes to responses
-            let client_pub = ctx.add_publication(8001);
-            let client_sub = ctx.add_subscription(8002);
+            // Use stream IDs in 18000+ range to avoid conflicts with rusteron (8000-8999)
+            let client_pub = ctx.add_publication(18001);
+            let client_sub = ctx.add_subscription(18002);
 
             // Server: subscribes to requests, publishes responses
-            let server_sub = ctx.add_subscription(8001);
-            let server_pub = ctx.add_publication(8002);
+            let server_sub = ctx.add_subscription(18001);
+            let server_pub = ctx.add_publication(18002);
 
             thread::sleep(Duration::from_millis(100));
 
@@ -302,12 +304,13 @@ mod aeron_rs_bench {
 
         for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
             // Side A: pub to B, sub from B
-            let pub_a = ctx.add_publication(9001);
-            let sub_a = ctx.add_subscription(9002);
+            // Use stream IDs in 19000+ range to avoid conflicts with rusteron (9000-9999)
+            let pub_a = ctx.add_publication(19001);
+            let sub_a = ctx.add_subscription(19002);
 
             // Side B: pub to A, sub from A
-            let pub_b = ctx.add_publication(9002);
-            let sub_b = ctx.add_subscription(9001);
+            let pub_b = ctx.add_publication(19002);
+            let sub_b = ctx.add_subscription(19001);
 
             thread::sleep(Duration::from_millis(100));
 
@@ -347,7 +350,20 @@ mod aeron_rs_bench {
     }
 }
 
-#[cfg(feature = "rusteron")]
+// When both features enabled, run both benchmark suites
+#[cfg(all(feature = "rusteron", feature = "aeron-rs"))]
+criterion_group!(
+    benches,
+    rusteron_bench::bench_simultaneous_pub_sub,
+    rusteron_bench::bench_request_response,
+    rusteron_bench::bench_bidirectional,
+    aeron_rs_bench::bench_simultaneous_pub_sub,
+    aeron_rs_bench::bench_request_response,
+    aeron_rs_bench::bench_bidirectional
+);
+
+// When only rusteron enabled
+#[cfg(all(feature = "rusteron", not(feature = "aeron-rs")))]
 criterion_group!(
     benches,
     rusteron_bench::bench_simultaneous_pub_sub,
@@ -355,6 +371,7 @@ criterion_group!(
     rusteron_bench::bench_bidirectional
 );
 
+// When only aeron-rs enabled
 #[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
 criterion_group!(
     benches,

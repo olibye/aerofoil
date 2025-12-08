@@ -153,7 +153,7 @@ mod rusteron_bench {
     }
 }
 
-#[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
+#[cfg(feature = "aeron-rs")]
 mod aeron_rs_bench {
     use super::*;
     use aeron_rs::concurrent::atomic_buffer::AtomicBuffer;
@@ -172,7 +172,8 @@ mod aeron_rs_bench {
 
     /// Benchmark bare aeron-rs offer (baseline, no abstraction).
     fn bench_offer_bare(c: &mut Criterion, ctx: &mut BenchContext) {
-        let publication = ctx.add_publication(2000);
+        // Use stream IDs in 3000+ range to avoid conflicts with rusteron (1000-1999)
+        let publication = ctx.add_publication(3000);
 
         let mut group = c.benchmark_group("aeron-rs/offer/bare");
         group.warm_up_time(Duration::from_millis(500));
@@ -201,9 +202,15 @@ mod aeron_rs_bench {
     }
 }
 
-#[cfg(feature = "rusteron")]
+// When both features enabled, run both benchmark suites
+#[cfg(all(feature = "rusteron", feature = "aeron-rs"))]
+criterion_group!(benches, rusteron_bench::bench_all, aeron_rs_bench::bench_all);
+
+// When only rusteron enabled
+#[cfg(all(feature = "rusteron", not(feature = "aeron-rs")))]
 criterion_group!(benches, rusteron_bench::bench_all);
 
+// When only aeron-rs enabled
 #[cfg(all(feature = "aeron-rs", not(feature = "rusteron")))]
 criterion_group!(benches, aeron_rs_bench::bench_all);
 

@@ -15,8 +15,9 @@ dhat = "0.3"
 
 [features]
 default = ["rusteron"]
-rusteron = ["rusteron-client", "rusteron-media-driver"]
-aeron-rs = ["dep:aeron-rs", "rusteron-media-driver"]
+rusteron = ["rusteron-client"]
+aeron-rs = ["dep:aeron-rs"]
+embedded-driver = ["rusteron-media-driver"]
 dhat-heap = []
 
 [[bench]]
