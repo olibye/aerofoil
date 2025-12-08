@@ -102,6 +102,7 @@ impl MediaDriverGuard {
             .map_err(|e| format!("Failed to set driver timeout: {:?}", e))?;
 
         // Explicitly set buffer lengths to ensure power-of-two capacities and consistency
+        // aeron-rs is strict about requiring power-of-two capacities for ring buffers
         driver_context
             .set_term_buffer_length(TERM_BUFFER_LENGTH)
             .map_err(|e| format!("Failed to set term buffer length: {:?}", e))?;
@@ -273,36 +274,125 @@ pub mod aeron_rs_support {
     use std::ffi::CString;
     use std::sync::{Arc, Mutex};
 
+    /// Aeron directory for aeron-rs benchmarks (separate from rusteron to avoid buffer conflicts).
+    const AERON_RS_DIR: &str = "/tmp/aeron-rs-bench";
+
     /// Benchmark context holding the media driver and Aeron client.
     ///
     /// Use this to set up benchmarks with a single shared driver and client.
+    /// Uses a separate Aeron directory from rusteron to avoid buffer compatibility issues.
     #[allow(dead_code)]
     pub struct BenchContext {
         pub aeron: Aeron,
-        pub driver: MediaDriverGuard,
+        pub driver: AeronRsDriverGuard,
+    }
+
+    /// RAII guard for aeron-rs specific media driver.
+    /// Uses a separate directory to avoid buffer compatibility issues with rusteron.
+    pub struct AeronRsDriverGuard {
+        stop_signal: Arc<AtomicBool>,
+    }
+
+    impl AeronRsDriverGuard {
+        #[cfg(feature = "embedded-driver")]
+        pub fn start() -> Result<Self, String> {
+            use rusteron_media_driver::{AeronDriver, AeronDriverContext};
+
+            // Clean up aeron-rs specific directory
+            let _ = std::fs::remove_dir_all(AERON_RS_DIR);
+
+            let driver_context = AeronDriverContext::new().map_err(|e| {
+                format!("Failed to create media driver context: {:?}", e)
+            })?;
+
+            // Set aeron-rs specific directory
+            let aeron_dir = CString::new(AERON_RS_DIR).expect("Invalid aeron dir");
+            driver_context
+                .set_dir(&aeron_dir)
+                .map_err(|e| format!("Failed to set aeron dir: {:?}", e))?;
+
+            driver_context
+                .set_driver_timeout_ms(DRIVER_TIMEOUT_MS)
+                .map_err(|e| format!("Failed to set driver timeout: {:?}", e))?;
+
+            driver_context
+                .set_term_buffer_length(TERM_BUFFER_LENGTH)
+                .map_err(|e| format!("Failed to set term buffer length: {:?}", e))?;
+            driver_context
+                .set_ipc_term_buffer_length(TERM_BUFFER_LENGTH)
+                .map_err(|e| format!("Failed to set ipc term buffer length: {:?}", e))?;
+
+            let (stop_signal, _driver_handle) = AeronDriver::launch_embedded(driver_context, false);
+            thread::sleep(Duration::from_millis(DRIVER_INIT_SLEEP_MS));
+
+            Ok(AeronRsDriverGuard { stop_signal })
+        }
+
+        #[cfg(not(feature = "embedded-driver"))]
+        pub fn start() -> Result<Self, String> {
+            Err("Embedded driver feature not enabled.".to_string())
+        }
+    }
+
+    impl Drop for AeronRsDriverGuard {
+        fn drop(&mut self) {
+            self.stop_signal.store(true, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(DRIVER_STOP_SLEEP_MS));
+        }
     }
 
     #[allow(dead_code)]
     impl BenchContext {
         /// Creates a new benchmark context with an embedded media driver and Aeron client.
+        /// Uses a separate Aeron directory to avoid buffer compatibility issues with rusteron.
         pub fn new() -> Option<Self> {
-            let driver = match MediaDriverGuard::start() {
+            let driver = match AeronRsDriverGuard::start() {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("Skipping benchmark: {}", e);
+                    eprintln!("Skipping aeron-rs benchmark: {}", e);
                     return None;
                 }
             };
 
-            let context = Context::new();
-            let aeron = match Aeron::new(context) {
-                Ok(a) => a,
-                Err(e) => {
+            let mut context = Context::new();
+            context.set_aeron_dir(AERON_RS_DIR.to_string());
+
+            // Use catch_unwind because aeron-rs panics on buffer compatibility issues
+            // instead of returning an error
+            let aeron_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                Aeron::new(context)
+            }));
+
+            let aeron = match aeron_result {
+                Ok(Ok(a)) => a,
+                Ok(Err(e)) => {
                     eprintln!(
                         "Failed to connect to Aeron media driver: {:?}\n\
                          Ensure the media driver started successfully.",
                         e
                     );
+                    return None;
+                }
+                Err(panic_info) => {
+                    let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "Unknown panic".to_string()
+                    };
+
+                    if panic_msg.contains("CapacityIsNotTwoPower") {
+                        eprintln!(
+                            "Skipping aeron-rs benchmarks: ring buffer capacity incompatibility.\n\
+                             The rusteron-media-driver creates buffers with metadata overhead that \n\
+                             results in non-power-of-two capacities, which aeron-rs doesn't support.\n\
+                             To run aeron-rs benchmarks, start an external Java/C++ media driver and set:\n\
+                             AERON_EXTERNAL_DRIVER=1 cargo bench --features aeron-rs"
+                        );
+                    } else {
+                        eprintln!("aeron-rs panicked during initialization: {}", panic_msg);
+                    }
                     return None;
                 }
             };

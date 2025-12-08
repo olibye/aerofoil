@@ -45,8 +45,30 @@ Both backends will share the `MediaDriverGuard` (already the case) but maintain 
 
 | Risk | Mitigation |
 |------|------------|
-| Stream ID conflicts between backends in same run | Use distinct stream ID ranges (rusteron: 1000-1999, aeron-rs: 2000-2999) |
+| Stream ID conflicts between backends in same run | Use distinct stream ID ranges (rusteron: 1000-14999, aeron-rs: 17000-23999) |
 | Benchmark ordering affects results | Run backends in consistent order, document warm-up effects |
+| aeron-rs ring buffer incompatibility | aeron-rs benchmarks skip gracefully with helpful message |
+
+## Known Limitations
+
+### aeron-rs Ring Buffer Capacity
+aeron-rs v0.1.8 requires ring buffer capacities to be exact powers of two. The rusteron-media-driver adds 384 bytes of metadata to configured buffer sizes, resulting in capacities like 1048960 (1MB + 384) which fail aeron-rs's validation.
+
+**Impact**: aeron-rs cannot use the embedded rusteron-media-driver for benchmarks.
+
+**Workaround**: Use an external Java or C++ media driver:
+```bash
+# Start external media driver (in separate terminal)
+java -cp aeron-all.jar io.aeron.driver.MediaDriver
+
+# Run aeron-rs benchmarks with external driver
+AERON_EXTERNAL_DRIVER=1 cargo bench --features aeron-rs
+
+# Rusteron benchmarks (use embedded driver)
+cargo bench --features rusteron,embedded-driver
+```
+
+When running with `--features rusteron,aeron-rs,embedded-driver`, rusteron benchmarks run successfully and aeron-rs benchmarks skip gracefully with a helpful message.
 
 ## Migration Plan
 1. Update cfg guards to remove `not(feature = "rusteron")` conditions
