@@ -1,117 +1,34 @@
 //! Integration test demonstrating the fan-out pattern with Aeron publishing.
-//!
-//! This test demonstrates:
-//! - **Fan-Out Pattern**: Single `AeronSubscriberValueNode` feeding multiple downstream nodes
-//! - **Publisher-in-Callback**: Output callbacks that capture `AeronPublisher` and publish results
-//! - **Separate Output Streams**: Sum published to stream 2002, count to stream 2003
-//!
-//! # Architecture
-//!
-//! ```text
-//!                           ┌─────────────┐
-//!                      ┌───►│ SummingNode │───► Stream 2002 (sum)
-//! Stream 2001 ───►     │    └─────────────┘
-//!              Subscriber
-//!                      │    ┌──────────────┐
-//!                      └───►│ CountingNode │───► Stream 2003 (count)
-//!                           └──────────────┘
-//! ```
-//!
-//! # Running this test
-//!
-//! ```bash
-//! cargo test --test sum_count_publisher_test --features integration-tests
-//! ```
+//! Runs with both rusteron and aeron-rs backends if enabled.
+
+#![cfg(any(feature = "rusteron", feature = "aeron-rs"))]
 
 mod common;
 
 use aerofoil::nodes::AeronSubscriberValueNode;
-use aerofoil::transport::rusteron::{RusteronPublisher, RusteronSubscriber};
 use aerofoil::transport::{AeronPublisher, AeronSubscriber, TransportError};
 use common::{CountingNode, MediaDriverGuard, SummingNode};
-use rusteron_client::IntoCString;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::thread;
 use std::time::Duration;
 use wingfoil::{Graph, IntoNode, RunFor, RunMode};
 
-#[test]
-fn given_input_stream_when_fan_out_graph_runs_then_publishes_sum_and_count() {
-    // Given: Start media driver
-    let _driver = MediaDriverGuard::start()
-        .expect("Failed to start media driver - see error message for installation instructions");
-
-    let context = rusteron_client::AeronContext::new().expect("Failed to create Aeron context");
-    let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
-    aeron.start().expect("Failed to start Aeron");
-
-    let channel = "aeron:ipc";
-    let input_stream = 2001;
-    let sum_stream = 2002;
-    let count_stream = 2003;
-
-    // Create input publisher (stream 2001)
-    let input_pub = aeron
-        .async_add_publication(&channel.into_c_string(), input_stream)
-        .expect("Failed to start input publication")
-        .poll_blocking(Duration::from_secs(5))
-        .expect("Failed to complete input publication");
-    let mut input_publisher = RusteronPublisher::new(input_pub);
-
-    // Create input subscriber (stream 2001)
-    let input_sub = aeron
-        .async_add_subscription(
-            &channel.into_c_string(),
-            input_stream,
-            rusteron_client::Handlers::no_available_image_handler(),
-            rusteron_client::Handlers::no_unavailable_image_handler(),
-        )
-        .expect("Failed to start input subscription")
-        .poll_blocking(Duration::from_secs(5))
-        .expect("Failed to complete input subscription");
-    let input_subscriber = RusteronSubscriber::new(input_sub);
-
-    // Create sum output publisher (stream 2002)
-    let sum_pub = aeron
-        .async_add_publication(&channel.into_c_string(), sum_stream)
-        .expect("Failed to start sum publication")
-        .poll_blocking(Duration::from_secs(5))
-        .expect("Failed to complete sum publication");
-    let sum_publisher = Rc::new(RefCell::new(RusteronPublisher::new(sum_pub)));
-
-    // Create count output publisher (stream 2003)
-    let count_pub = aeron
-        .async_add_publication(&channel.into_c_string(), count_stream)
-        .expect("Failed to start count publication")
-        .poll_blocking(Duration::from_secs(5))
-        .expect("Failed to complete count publication");
-    let count_publisher = Rc::new(RefCell::new(RusteronPublisher::new(count_pub)));
-
-    // Create output subscribers to verify published values
-    let sum_sub = aeron
-        .async_add_subscription(
-            &channel.into_c_string(),
-            sum_stream,
-            rusteron_client::Handlers::no_available_image_handler(),
-            rusteron_client::Handlers::no_unavailable_image_handler(),
-        )
-        .expect("Failed to start sum subscription")
-        .poll_blocking(Duration::from_secs(5))
-        .expect("Failed to complete sum subscription");
-    let mut sum_subscriber = RusteronSubscriber::new(sum_sub);
-
-    let count_sub = aeron
-        .async_add_subscription(
-            &channel.into_c_string(),
-            count_stream,
-            rusteron_client::Handlers::no_available_image_handler(),
-            rusteron_client::Handlers::no_unavailable_image_handler(),
-        )
-        .expect("Failed to start count subscription")
-        .poll_blocking(Duration::from_secs(5))
-        .expect("Failed to complete count subscription");
-    let mut count_subscriber = RusteronSubscriber::new(count_sub);
+/// Generic test runner that works with any AeronPublisher/AeronSubscriber implementation
+fn run_fan_out_test<P, S>(
+    mut input_publisher: P,
+    input_subscriber: S,
+    sum_publisher: P,
+    mut sum_subscriber: S,
+    count_publisher: P,
+    mut count_subscriber: S,
+) where
+    P: AeronPublisher + 'static,
+    S: AeronSubscriber + 'static,
+{
+    // Wrappers for publishers to be used in callbacks
+    let sum_publisher_rc = Rc::new(RefCell::new(sum_publisher));
+    let count_publisher_rc = Rc::new(RefCell::new(count_publisher));
 
     // Wait for connections to stabilize
     thread::sleep(Duration::from_millis(200));
@@ -144,13 +61,13 @@ fn given_input_stream_when_fan_out_graph_runs_then_publishes_sum_and_count() {
         .build();
 
     // Create SummingNode with callback that publishes to sum stream
-    let sum_pub_clone = sum_publisher.clone();
+    let sum_pub_clone = sum_publisher_rc.clone();
     let summing_node = SummingNode::new(subscriber_node.clone(), move |output| {
         let _ = sum_pub_clone.borrow_mut().offer(&output.sum.to_le_bytes());
     });
 
     // Create CountingNode with callback that publishes to count stream
-    let count_pub_clone = count_publisher.clone();
+    let count_pub_clone = count_publisher_rc.clone();
     let counting_node = CountingNode::new(subscriber_node.clone(), move |output| {
         let _ = count_pub_clone
             .borrow_mut()
@@ -228,6 +145,127 @@ fn given_input_stream_when_fan_out_graph_runs_then_publishes_sum_and_count() {
         "Expected count of 5, got {}",
         received_count.unwrap()
     );
+}
 
-    println!("✓ Fan-out pattern test passed: sum={}, count={}", 15, 5);
+#[cfg(feature = "rusteron")]
+mod rusteron_test {
+    use super::*;
+    use aerofoil::transport::rusteron::{RusteronPublisher, RusteronSubscriber};
+    use rusteron_client::IntoCString;
+
+    #[test]
+    fn given_input_stream_when_fan_out_graph_runs_with_rusteron_then_publishes_sum_and_count() {
+        let _driver = MediaDriverGuard::start()
+            .expect("Failed to start media driver - see error message for installation instructions");
+
+        let context = rusteron_client::AeronContext::new().expect("Failed to create Aeron context");
+        let aeron = rusteron_client::Aeron::new(&context).expect("Failed to create Aeron");
+        aeron.start().expect("Failed to start Aeron");
+
+        let channel = "aeron:ipc";
+        let input_stream = 2001;
+        let sum_stream = 2002;
+        let count_stream = 2003;
+
+        // Helper to creating blocking publications
+        let create_pub = |stream_id| {
+            aeron
+                .async_add_publication(&channel.into_c_string(), stream_id)
+                .expect("Failed to start publication")
+                .poll_blocking(Duration::from_secs(5))
+                .expect("Failed to complete publication")
+        };
+
+        // Helper to creating blocking subscriptions
+        let create_sub = |stream_id| {
+            aeron
+                .async_add_subscription(
+                    &channel.into_c_string(),
+                    stream_id,
+                    rusteron_client::Handlers::no_available_image_handler(),
+                    rusteron_client::Handlers::no_unavailable_image_handler(),
+                )
+                .expect("Failed to start subscription")
+                .poll_blocking(Duration::from_secs(5))
+                .expect("Failed to complete subscription")
+        };
+
+        let input_publisher = RusteronPublisher::new(create_pub(input_stream));
+        let input_subscriber = RusteronSubscriber::new(create_sub(input_stream));
+        let sum_publisher = RusteronPublisher::new(create_pub(sum_stream));
+        let sum_subscriber = RusteronSubscriber::new(create_sub(sum_stream));
+        let count_publisher = RusteronPublisher::new(create_pub(count_stream));
+        let count_subscriber = RusteronSubscriber::new(create_sub(count_stream));
+
+        run_fan_out_test(
+            input_publisher,
+            input_subscriber,
+            sum_publisher,
+            sum_subscriber,
+            count_publisher,
+            count_subscriber,
+        );
+    }
+}
+
+#[cfg(feature = "aeron-rs")]
+mod aeron_rs_test {
+    use super::*;
+    use aerofoil::transport::aeron_rs::{AeronRsPublisher, AeronRsSubscriber};
+    use aeron_rs::aeron::Aeron;
+    use aeron_rs::context::Context;
+    use std::ffi::CString;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn given_input_stream_when_fan_out_graph_runs_with_aeron_rs_then_publishes_sum_and_count() {
+        let _driver = MediaDriverGuard::start()
+            .expect("Failed to start media driver - see error message for installation instructions");
+
+        let context = Context::new();
+        let mut aeron = Aeron::new(context).expect("Failed to connect to Aeron");
+
+        let channel = CString::new("aeron:ipc").unwrap();
+        let input_stream = 2001;
+        let sum_stream = 2002;
+        let count_stream = 2003;
+
+        // Helper to add publication and wait
+        fn add_pub(aeron: &mut Aeron, channel: CString, stream_id: i32) -> Arc<Mutex<aeron_rs::publication::Publication>> {
+            let id = aeron.add_publication(channel, stream_id).expect("Failed to add pub");
+            loop {
+                if let Ok(pub_arc) = aeron.find_publication(id) {
+                    return pub_arc;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        // Helper to add subscription and wait
+        fn add_sub(aeron: &mut Aeron, channel: CString, stream_id: i32) -> Arc<Mutex<aeron_rs::subscription::Subscription>> {
+            let id = aeron.add_subscription(channel, stream_id).expect("Failed to add sub");
+            loop {
+                if let Ok(sub_arc) = aeron.find_subscription(id) {
+                    return sub_arc;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        let input_publisher = AeronRsPublisher::new(add_pub(&mut aeron, channel.clone(), input_stream));
+        let input_subscriber = AeronRsSubscriber::new(add_sub(&mut aeron, channel.clone(), input_stream));
+        let sum_publisher = AeronRsPublisher::new(add_pub(&mut aeron, channel.clone(), sum_stream));
+        let sum_subscriber = AeronRsSubscriber::new(add_sub(&mut aeron, channel.clone(), sum_stream));
+        let count_publisher = AeronRsPublisher::new(add_pub(&mut aeron, channel.clone(), count_stream));
+        let count_subscriber = AeronRsSubscriber::new(add_sub(&mut aeron, channel.clone(), count_stream));
+
+        run_fan_out_test(
+            input_publisher,
+            input_subscriber,
+            sum_publisher,
+            sum_subscriber,
+            count_publisher,
+            count_subscriber,
+        );
+    }
 }
