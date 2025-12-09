@@ -1,12 +1,9 @@
 //! Subscription throughput benchmarks for Aeron transport.
 //!
-//! Measures the throughput of receiving messages comparing:
-//! - **bare**: Direct API calls (baseline)
-//! - **aerofoil**: Calls through aerofoil's `AeronSubscriber` trait abstraction
-//!
-//! Note: Wingfoil nodes (`AeronSubscriberValueNode`, `AeronSubscriberValueRefNode`)
-//! add minimal overhead (RefCell borrow + value storage) on top of the aerofoil layer.
-//! The "aerofoil" benchmark effectively measures the node's core polling overhead.
+//! Measures the throughput of receiving messages across different scenarios:
+//! - Basic polling
+//! - Polling with message parsing
+//! - Burst throughput
 
 mod common;
 
@@ -25,58 +22,14 @@ fn bench_all(c: &mut Criterion) {
         None => return,
     };
 
-    // Bare rusteron benchmarks (baseline)
-    bench_poll_bare(c, &ctx);
-
-    // Aerofoil trait abstraction benchmarks
-    bench_poll_aerofoil(c, &ctx);
-
-    // Additional benchmarks
+    bench_poll(c, &ctx);
     bench_poll_with_parsing(c, &ctx);
     bench_burst_throughput(c, &ctx);
 }
 
-/// Benchmark bare rusteron poll (baseline, no abstraction).
-fn bench_poll_bare(c: &mut Criterion, ctx: &BenchContext) {
-    let mut group = c.benchmark_group("poll/bare");
-    group.warm_up_time(Duration::from_millis(500));
-    group.measurement_time(Duration::from_secs(1));
-    group.sample_size(10);
-
-    for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-        let stream_id = 5000 + size.bytes() as i32;
-        let (publication, subscription) = ctx.add_pub_sub(stream_id);
-
-        group.throughput(Throughput::Bytes(size.bytes() as u64));
-
-        group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
-            let buffer = size.create_buffer();
-
-            b.iter(|| {
-                // Direct rusteron publish
-                let _ = black_box(
-                    publication.offer::<rusteron_client::AeronReservedValueSupplierLogger>(
-                        black_box(&buffer),
-                        None,
-                    ),
-                );
-
-                // Direct rusteron poll
-                let count = subscription
-                    .poll_once(|_buffer, _header| {}, 1)
-                    .unwrap_or(0);
-
-                black_box(count)
-            });
-        });
-    }
-
-    group.finish();
-}
-
-/// Benchmark aerofoil poll (with AeronSubscriber trait abstraction).
-fn bench_poll_aerofoil(c: &mut Criterion, ctx: &BenchContext) {
-    let mut group = c.benchmark_group("poll/aerofoil");
+/// Benchmark basic poll throughput.
+fn bench_poll(c: &mut Criterion, ctx: &BenchContext) {
+    let mut group = c.benchmark_group("poll");
     group.warm_up_time(Duration::from_millis(500));
     group.measurement_time(Duration::from_secs(1));
     group.sample_size(10);
@@ -94,12 +47,8 @@ fn bench_poll_aerofoil(c: &mut Criterion, ctx: &BenchContext) {
             let buffer = size.create_buffer();
 
             b.iter(|| {
-                // Aerofoil publish
                 let _ = publisher.offer(&buffer);
-
-                // Aerofoil poll
                 let count = subscriber.poll(|_fragment| Ok(())).unwrap_or(0);
-
                 black_box(count)
             });
         });

@@ -79,38 +79,9 @@ fn bench_subscription_allocations(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark try_claim hot path allocations.
-fn bench_try_claim_allocations(c: &mut Criterion) {
-    let ctx = match BenchContext::new() {
-        Some(c) => c,
-        None => return,
-    };
-
-    let mut group = c.benchmark_group("allocations/try_claim");
-
-    for size in [MessageSize::Small, MessageSize::Medium, MessageSize::Large] {
-        let stream_id = 14001 + size.bytes() as i32;
-        let publication = ctx.add_publication(stream_id);
-        let mut publisher = RusteronPublisher::new(publication);
-
-        let data = size.create_buffer();
-
-        group.bench_function(BenchmarkId::from_parameter(size.name()), |b| {
-            b.iter(|| {
-                if let Ok(mut claim) = publisher.try_claim(data.len()) {
-                    claim.copy_from_slice(&data);
-                }
-            });
-        });
-    }
-
-    group.finish();
-}
-
 criterion_group!(
     benches,
     bench_publication_allocations,
-    bench_subscription_allocations,
-    bench_try_claim_allocations
+    bench_subscription_allocations
 );
 criterion_main!(benches);
