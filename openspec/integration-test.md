@@ -42,20 +42,30 @@ Required for building and testing the Rusteron adapter.
 #### macOS
 
 1. Install Xcode Command Line Tools: `xcode-select --install`
-2. Install CMake: `brew install cmake`
+2. Install CMake: `brew install cmake` (Ensure version 3.30+)
 3. Verify: `clang++ --version` and `cmake --version`
 
 #### Linux
 
-1. Install build tools: `sudo apt-get install build-essential cmake`
-2. Verify: `g++ --version` and `cmake --version`
+1. Install build tools and dependencies:
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y build-essential libbsd-dev uuid-dev
+   ```
+2. Install CMake 3.30+ (Required):
+   ```bash
+   wget https://github.com/Kitware/CMake/releases/download/v3.31.5/cmake-3.31.5-linux-x86_64.sh -q -O /tmp/cmake-install.sh
+   chmod +x /tmp/cmake-install.sh
+   sudo /tmp/cmake-install.sh --prefix=/usr/local --skip-license
+   ```
+3. Verify: `g++ --version` and `cmake --version` (must be >= 3.30)
 
 ## Verification
 
 After installation:
 1. Run `which aeronmd` - should show path to binary
-2. Run `cargo build --features rusteron` - build script checks dependencies
-3. Run `cargo test --features rusteron` - runs all tests including integration
+2. Run `cargo build --features embedded-driver` - build script checks dependencies
+3. Run `cargo test --features embedded-driver` - runs all tests including integration
 
 The build script will warn if aeronmd is not found.
 
@@ -70,7 +80,7 @@ The build script will warn if aeronmd is not found.
 - Verify Xcode Command Line Tools installed (macOS)
 - Verify build-essential installed (Linux)
 - Check `clang++ --version` or `g++ --version` works
-- Try `cargo clean && cargo build --features rusteron`
+- Try `cargo clean && cargo build --features embedded-driver`
 
 **Port conflicts during tests**
 - Kill existing processes: `pkill aeronmd`
