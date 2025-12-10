@@ -197,10 +197,7 @@ pub mod rusteron_support {
         }
 
         /// Adds a publication and waits for it to be ready.
-        pub fn add_publication(
-            &self,
-            stream_id: i32,
-        ) -> rusteron_client::AeronPublication {
+        pub fn add_publication(&self, stream_id: i32) -> rusteron_client::AeronPublication {
             let async_pub = self
                 .aeron
                 .async_add_publication(&CHANNEL.into_c_string(), stream_id)
@@ -215,10 +212,7 @@ pub mod rusteron_support {
         }
 
         /// Adds a subscription and waits for it to be ready.
-        pub fn add_subscription(
-            &self,
-            stream_id: i32,
-        ) -> rusteron_client::AeronSubscription {
+        pub fn add_subscription(&self, stream_id: i32) -> rusteron_client::AeronSubscription {
             let async_sub = self
                 .aeron
                 .async_add_subscription(
@@ -241,7 +235,10 @@ pub mod rusteron_support {
         pub fn add_pub_sub(
             &self,
             stream_id: i32,
-        ) -> (rusteron_client::AeronPublication, rusteron_client::AeronSubscription) {
+        ) -> (
+            rusteron_client::AeronPublication,
+            rusteron_client::AeronSubscription,
+        ) {
             let publication = self.add_publication(stream_id);
             let subscription = self.add_subscription(stream_id);
             (publication, subscription)
