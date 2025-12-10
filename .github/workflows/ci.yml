@@ -10,55 +10,30 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test-aeron-rs:
-    name: Test (aeron-rs)
+  check:
+    name: Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Build
-        run: cargo build --no-default-features --features aeron-rs
-      - name: Test
-        run: cargo test --no-default-features --features aeron-rs --lib
-      - name: Clippy
-        run: cargo clippy --no-default-features --features aeron-rs -- -D warnings
 
-  test-rusteron:
-    name: Test (rusteron)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install Aeron
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake g++ libbsd-dev uuid-dev
-          git clone --depth 1 https://github.com/real-logic/aeron.git /tmp/aeron
-          cd /tmp/aeron
-          mkdir build && cd build
-          cmake -DCMAKE_BUILD_TYPE=Release ..
-          cmake --build . --target install
-          sudo ldconfig
       - name: Build
-        run: cargo build --features rusteron
-      - name: Test
-        run: cargo test --features rusteron --lib
-      - name: Clippy
-        run: cargo clippy --features rusteron -- -D warnings
+        run: cargo build --features embedded-driver
 
-  test-no-features:
-    name: Test (no features)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Build
-        run: cargo build --no-default-features
       - name: Test
-        run: cargo test --no-default-features --lib
+        run: cargo test --features embedded-driver
+
+      - name: Clippy
+        run: cargo clippy --features embedded-driver -- -D warnings
+
+      - name: Build benchmarks
+        run: cargo build --benches --features embedded-driver
+
+      - name: Build allocation benchmarks
+        run: cargo build --benches --features embedded-driver,dhat-heap
 
   fmt:
     name: Format
