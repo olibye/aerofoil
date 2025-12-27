@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use wingfoil::{GraphState, MutableNode, StreamPeek, StreamPeekRef};
+use wingfoil::{GraphState, MutableNode, StreamPeek, StreamPeekRef, UpStreams};
 
 /// RAII guard for managing Aeron media driver lifecycle.
 ///
@@ -170,7 +170,7 @@ where
     T: StreamPeekRef<i64> + 'static,
     F: FnMut(SummingNodeOutput) + 'static,
 {
-    fn cycle(&mut self, _state: &mut GraphState) -> bool {
+    fn cycle(&mut self, _state: &mut GraphState) -> anyhow::Result<bool> {
         // Process the latest value from upstream using peek pattern
         self.process_upstream();
 
@@ -181,11 +181,16 @@ where
         });
 
         // Return false to indicate we want to continue processing
-        false
+        Ok(false)
     }
 
-    fn start(&mut self, state: &mut GraphState) {
+    fn start(&mut self, state: &mut GraphState)-> anyhow::Result<()> {
         state.always_callback();
+        Ok(())
+    }
+    
+    fn upstreams(&self) -> UpStreams {
+        UpStreams::none()
     }
 }
 
@@ -277,7 +282,7 @@ where
     T: StreamPeekRef<i64> + 'static,
     F: FnMut(CountingNodeOutput) + 'static,
 {
-    fn cycle(&mut self, _state: &mut GraphState) -> bool {
+    fn cycle(&mut self, _state: &mut GraphState) -> anyhow::Result<bool> {
         // Process the latest value using value-access pattern
         self.process_upstream();
 
@@ -287,10 +292,15 @@ where
             last_value: self.last_value,
         });
 
-        false
+        Ok(false)
     }
 
-    fn start(&mut self, state: &mut GraphState) {
+    fn start(&mut self, state: &mut GraphState) -> anyhow::Result<()> {
         state.always_callback();
+        Ok(())
+    }
+    
+    fn upstreams(&self) -> wingfoil::UpStreams {
+        UpStreams::none()
     }
 }
