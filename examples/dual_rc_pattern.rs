@@ -16,7 +16,9 @@ use rusteron_client::IntoCString;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
-use wingfoil::{Graph, GraphState, IntoNode, MutableNode, RunFor, RunMode, StreamPeekRef, UpStreams};
+use wingfoil::{
+    Graph, GraphState, IntoNode, MutableNode, RunFor, RunMode, StreamPeekRef, UpStreams,
+};
 
 /// Example downstream node demonstrating the dual-Rc pattern
 struct DownstreamNode<T: StreamPeekRef<i64>> {
@@ -41,7 +43,7 @@ impl<T: StreamPeekRef<i64> + 'static> MutableNode for DownstreamNode<T> {
         state.always_callback();
         Ok(())
     }
-    
+
     fn upstreams(&self) -> wingfoil::UpStreams {
         UpStreams::none()
     }

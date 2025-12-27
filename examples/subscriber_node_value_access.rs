@@ -57,7 +57,7 @@ impl<T: StreamPeekRef<i64> + 'static> MutableNode for ValueAccessNode<T> {
         state.always_callback();
         Ok(())
     }
-    
+
     fn upstreams(&self) -> wingfoil::UpStreams {
         UpStreams::none()
     }

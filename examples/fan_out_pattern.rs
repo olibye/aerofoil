@@ -17,7 +17,9 @@ use rusteron_client::IntoCString;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
-use wingfoil::{Graph, GraphState, IntoNode, MutableNode, RunFor, RunMode, StreamPeekRef, UpStreams};
+use wingfoil::{
+    Graph, GraphState, IntoNode, MutableNode, RunFor, RunMode, StreamPeekRef, UpStreams,
+};
 
 /// Node that sums values and publishes to Aeron
 struct SummingPublisher<T: StreamPeekRef<i64>, P: AeronPublisher> {
@@ -56,11 +58,11 @@ impl<T: StreamPeekRef<i64> + 'static, P: AeronPublisher + 'static> MutableNode
         Ok(false)
     }
 
-    fn start(&mut self, state: &mut GraphState)-> anyhow::Result<()> {
+    fn start(&mut self, state: &mut GraphState) -> anyhow::Result<()> {
         state.always_callback();
         Ok(())
     }
-    
+
     fn upstreams(&self) -> UpStreams {
         UpStreams::none()
     }
@@ -107,7 +109,7 @@ impl<T: StreamPeekRef<i64> + 'static, P: AeronPublisher + 'static> MutableNode
         state.always_callback();
         Ok(())
     }
-    
+
     fn upstreams(&self) -> wingfoil::UpStreams {
         UpStreams::none()
     }

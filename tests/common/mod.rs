@@ -184,11 +184,11 @@ where
         Ok(false)
     }
 
-    fn start(&mut self, state: &mut GraphState)-> anyhow::Result<()> {
+    fn start(&mut self, state: &mut GraphState) -> anyhow::Result<()> {
         state.always_callback();
         Ok(())
     }
-    
+
     fn upstreams(&self) -> UpStreams {
         UpStreams::none()
     }
@@ -299,7 +299,7 @@ where
         state.always_callback();
         Ok(())
     }
-    
+
     fn upstreams(&self) -> wingfoil::UpStreams {
         UpStreams::none()
     }

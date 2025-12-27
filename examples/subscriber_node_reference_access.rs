@@ -15,7 +15,9 @@ use aerofoil::transport::rusteron::RusteronSubscriber;
 use rusteron_client::IntoCString;
 use std::cell::RefCell;
 use std::time::Duration;
-use wingfoil::{Graph, GraphState, IntoNode, MutableNode, RunFor, RunMode, StreamPeekRef, UpStreams};
+use wingfoil::{
+    Graph, GraphState, IntoNode, MutableNode, RunFor, RunMode, StreamPeekRef, UpStreams,
+};
 
 /// Example downstream node that uses peek_ref() for reference access
 struct ReferenceAccessNode<T: StreamPeekRef<i64>> {
@@ -49,7 +51,7 @@ impl<T: StreamPeekRef<i64> + 'static> MutableNode for ReferenceAccessNode<T> {
         state.always_callback();
         Ok(())
     }
-    
+
     fn upstreams(&self) -> UpStreams {
         UpStreams::none()
     }
