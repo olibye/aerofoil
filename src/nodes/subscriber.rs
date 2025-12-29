@@ -7,6 +7,39 @@
 use crate::transport::{AeronSubscriber, TransportError};
 use wingfoil::{Element, GraphState, MutableNode, StreamPeekRef};
 
+use super::builder::AeronSubscriberNodeBuilder;
+
+/// Starts a fluent builder chain for an Aeron subscriber node.
+///
+/// This function serves as an entry point for creating Aeron subscriber nodes
+/// using a fluent API. It returns an [`AeronSubscriberNodeBuilder`] pre-configured
+/// with the provided subscriber.
+///
+/// # Parameters
+///
+/// - `subscriber`: The Aeron subscriber (or something convertible into one)
+///
+/// # Returns
+///
+/// An `AeronSubscriberNodeBuilder` configured with the subscriber.
+///
+/// # Example
+///
+/// ```ignore
+/// let node = receive_aeron(subscriber)
+///     .parser(|bytes| Some(bytes.len()))
+///     .default(0)
+///     .build();
+/// ```
+pub fn receive_aeron<T, F, S>(subscriber: impl Into<S>) -> AeronSubscriberNodeBuilder<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Option<T> + 'static,
+    S: AeronSubscriber + 'static,
+{
+    AeronSubscriberNodeBuilder::new().subscriber(subscriber)
+}
+
 /// Internal shared implementation for Aeron subscriber nodes.
 ///
 /// This struct contains the common state and logic used by both [`AeronSubscriberValueRefNode`]
@@ -544,5 +577,25 @@ mod tests {
 
         // Then: Current value remains at initial value (123)
         assert_eq!(*node.peek_ref(), 123);
+    }
+
+    /// Test: Given receive_aeron factory, when used, then constructs builder correctly
+    #[test]
+    fn given_receive_aeron_factory_when_used_then_constructs_builder() {
+         // Given: Mock subscriber
+         let subscriber = MockSubscriber::new(vec![]);
+
+         // When: receive_aeron is called
+         // Note: We need to specify types or let them be inferred from subsequent usage.
+         // Here we specify T=i64. F is inferred. S must be explicit because receive_aeron takes impl Into<S>.
+         // F is inferred from the parser we pass later.
+         let builder = receive_aeron::<i64, _, MockSubscriber>(subscriber);
+
+         // Then: Builder has subscriber set (implied, as we can finish building)
+         let parser = |_: &[u8]| -> Option<i64> { None };
+         let node = builder.parser(parser).default(0).build();
+
+         // Then: Node is valid
+         assert_eq!(*node.borrow().peek_ref(), 0);
     }
 }
