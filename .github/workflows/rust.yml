@@ -27,7 +27,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache dependencies and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+           # Ensure we cache the target directory even if the build fails,
+           # to save progress on the slow Aeron driver build.
+           cache-on-failure: true
 
       - name: Build
         run: cargo build --features embedded-driver
