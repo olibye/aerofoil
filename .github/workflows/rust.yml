@@ -16,8 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.30.x'
+
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbsd-dev
+        run: sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev build-essential
 
       - uses: dtolnay/rust-toolchain@stable
         with:
