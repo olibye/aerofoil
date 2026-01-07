@@ -1,6 +1,13 @@
+use std::env;
 use std::process::Command;
 
 fn main() {
+    // If embedded-driver is enabled, we rely on rusteron-media-driver to handle the driver.
+    // We don't need to check for aeronmd in PATH.
+    if env::var("CARGO_FEATURE_EMBEDDED_DRIVER").is_ok() {
+        return;
+    }
+
     check_aeron_availability();
 }
 
@@ -32,7 +39,9 @@ fn check_aeron_availability() {
         }
     }
 
+    // If we are here, we are not using embedded-driver AND we couldn't find aeronmd.
+    // This is a failure condition for integration tests.
     println!("cargo:warning=Aeron media driver not found in PATH");
     println!("cargo:warning=Integration tests will require manual media driver setup");
-    println!("cargo:warning=See README.md or openspec/integration-test.md for instructions");
+    panic!("Aeron media driver not found and 'embedded-driver' feature not enabled.");
 }

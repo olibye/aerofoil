@@ -16,13 +16,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.30.x'
+
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbsd-dev
+        run: sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev build-essential
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache dependencies and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+           # Ensure we cache the target directory even if the build fails,
+           # to save progress on the slow Aeron driver build.
+           cache-on-failure: true
 
       - name: Build
         run: cargo build --features embedded-driver
