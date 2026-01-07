@@ -5,7 +5,7 @@
 //! framework using Element types.
 
 use crate::transport::{AeronSubscriber, TransportError};
-use wingfoil::{Element, GraphState, MutableNode, StreamPeekRef};
+use wingfoil::{Element, GraphState, MutableNode, StreamPeekRef, UpStreams};
 
 /// Internal shared implementation for Aeron subscriber nodes.
 ///
@@ -161,22 +161,27 @@ where
     /// This method polls the Aeron subscriber (non-blocking) and processes any
     /// available messages, updating the current value when messages are successfully
     /// parsed. Returns `false` to indicate the node should continue processing.
-    fn cycle(&mut self, _state: &mut GraphState) -> bool {
+    fn cycle(&mut self, _state: &mut GraphState) -> anyhow::Result<bool> {
         // Poll and process any available messages
         // Ignore errors - we continue processing on the next cycle
         let _ = self.core.poll_and_process();
 
         // Return false to indicate we want to continue processing
         // (the graph will control when to stop based on its run configuration)
-        false
+        Ok(false)
     }
 
     /// Register this node to be called on every cycle.
     ///
     /// This ensures the node continuously polls for incoming messages
     /// throughout the graph's execution.
-    fn start(&mut self, state: &mut GraphState) {
+    fn start(&mut self, state: &mut GraphState) -> anyhow::Result<()> {
         state.always_callback();
+        Ok(())
+    }
+
+    fn upstreams(&self) -> wingfoil::UpStreams {
+        UpStreams::none()
     }
 }
 
@@ -315,22 +320,27 @@ where
     /// This method polls the Aeron subscriber (non-blocking) and processes any
     /// available messages, updating the current value when messages are successfully
     /// parsed. Returns `false` to indicate the node should continue processing.
-    fn cycle(&mut self, _state: &mut GraphState) -> bool {
+    fn cycle(&mut self, _state: &mut GraphState) -> anyhow::Result<bool> {
         // Poll and process any available messages
         // Ignore errors - we continue processing on the next cycle
         let _ = self.core.poll_and_process();
 
         // Return false to indicate we want to continue processing
         // (the graph will control when to stop based on its run configuration)
-        false
+        Ok(false)
     }
 
     /// Register this node to be called on every cycle.
     ///
     /// This ensures the node continuously polls for incoming messages
     /// throughout the graph's execution.
-    fn start(&mut self, state: &mut GraphState) {
+    fn start(&mut self, state: &mut GraphState) -> anyhow::Result<()> {
         state.always_callback();
+        Ok(())
+    }
+
+    fn upstreams(&self) -> UpStreams {
+        UpStreams::none()
     }
 }
 

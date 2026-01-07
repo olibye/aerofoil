@@ -17,7 +17,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 use wingfoil::{
-    Graph, GraphState, IntoNode, MutableNode, RunFor, RunMode, StreamPeek, StreamPeekRef,
+    Graph, GraphState, IntoNode, MutableNode, RunFor, RunMode, StreamPeek, StreamPeekRef, UpStreams,
 };
 
 /// Example downstream node that uses peek_value() for clean value access.
@@ -40,7 +40,7 @@ impl<T: StreamPeekRef<i64>> ValueAccessNode<T> {
 }
 
 impl<T: StreamPeekRef<i64> + 'static> MutableNode for ValueAccessNode<T> {
-    fn cycle(&mut self, _state: &mut GraphState) -> bool {
+    fn cycle(&mut self, _state: &mut GraphState) -> anyhow::Result<bool> {
         // Value access pattern: peek_value() on the Rc<RefCell<...>>
         // Wingfoil auto-implements StreamPeek for RefCell<T> where T: StreamPeekRef
         let current = self.upstream.peek_value();
@@ -50,11 +50,16 @@ impl<T: StreamPeekRef<i64> + 'static> MutableNode for ValueAccessNode<T> {
             self.last_value = current;
         }
 
-        false
+        Ok(false)
     }
 
-    fn start(&mut self, state: &mut GraphState) {
+    fn start(&mut self, state: &mut GraphState) -> anyhow::Result<()> {
         state.always_callback();
+        Ok(())
+    }
+
+    fn upstreams(&self) -> wingfoil::UpStreams {
+        UpStreams::none()
     }
 }
 

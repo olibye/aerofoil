@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.100"
 rusteron-client = "0.1"
 rusteron-media-driver = { version = "0.1", optional = true }
-wingfoil = "0.1"
+wingfoil = "1.0"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
