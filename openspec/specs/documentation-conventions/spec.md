@@ -9,7 +9,7 @@ All Rust code examples MUST be placed in runnable example files in the `examples
 
 #### Scenario: Developer writes documentation for a new node type
 
-- **WHEN** a developer documents a new Wingfoil node implementation and wants to show usage examples
+- **WHEN** a developer documents a new feature implementation and wants to show usage examples
 - **THEN** they create a file in `examples/` (e.g., `examples/my_node_usage.rs`)
 - **AND** reference it in doc comments with text like "See `examples/my_node_usage.rs` for a complete example"
 - **AND** do not embed code blocks with ````rust` or ````rust,ignore` in the doc comments
