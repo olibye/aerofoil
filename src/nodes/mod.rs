@@ -4,9 +4,33 @@
 //! with Wingfoil's stream processing framework using Element types and the
 //! peek-based composition pattern.
 //!
+//! # Architecture Patterns
+//!
+//! This module supports two fundamental patterns for integrating Aeron with Wingfoil:
+//!
+//! ## Pattern 1: Wingfoil-Driven Polling (Traditional)
+//!
+//! Subscriber nodes poll Aeron during graph cycles. Best for:
+//! - Simple applications with owned value types
+//! - When Wingfoil controls the execution flow
+//! - When Aeron idle strategies are not required
+//!
+//! Use [`AeronSubscriberValueNode`] or [`AeronSubscriberValueRefNode`].
+//!
+//! ## Pattern 2: Inverted Control (Zero-Copy)
+//!
+//! External Aeron polling drives Wingfoil. Best for:
+//! - Zero-copy SBE decoding with flyweight lifetimes
+//! - Integration with Aeron idle strategies
+//! - High-frequency trading requirements
+//! - When you need fine-grained control over polling
+//!
+//! Use [`MutableSource`] with external polling loop.
+//! See `examples/inverted_control_idle_strategy.rs` for complete example.
+//!
 //! # Choosing Between Node Types
 //!
-//! This module provides two Aeron subscriber node types with different access patterns:
+//! This module provides three node types with different characteristics:
 //!
 //! ## `AeronSubscriberValueRefNode<T>` - Reference Access
 //!
@@ -36,15 +60,30 @@
 //!
 //! See `examples/subscriber_node_value_access.rs` for a complete example.
 //!
+//! ## `MutableSource<T>` - External Update
+//!
+//! Passive state container updated from outside the graph.
+//!
+//! **Use when:**
+//! - Need zero-copy SBE decoding with flyweight lifetimes
+//! - Integrating Aeron idle strategies
+//! - External event loop drives execution
+//! - Processing happens in Aeron poll callbacks
+//!
+//! **Access pattern:** Same as value nodes - `self.upstream.peek_value()`
+//!
+//! See `examples/inverted_control_idle_strategy.rs` for a complete example.
+//!
 //! ## Comparison Table
 //!
-//! | Aspect | AeronSubscriberValueRefNode | AeronSubscriberValueNode |
-//! |--------|---------------------|--------------------------|
-//! | Trait | `StreamPeekRef<T>` | `StreamPeek<T>` |
-//! | Access | `upstream.borrow().peek_ref()` | `upstream.peek_value()` |
-//! | Returns | `&T` | `T` |
-//! | Best for | Large types, Rc-wrapped | Primitives, Copy types |
-//! | Cloning | Explicit via `*ref` | Implicit in return |
+//! | Aspect | AeronSubscriberValueRefNode | AeronSubscriberValueNode | MutableSource |
+//! |--------|---------------------|--------------------------|---------------|
+//! | Trait | `StreamPeekRef<T>` | `StreamPeek<T>` | `StreamPeek<T>` |
+//! | Access | `upstream.borrow().peek_ref()` | `upstream.peek_value()` | `upstream.peek_value()` |
+//! | Returns | `&T` | `T` | `T` |
+//! | Polling | Internal (cycle) | Internal (cycle) | External (user loop) |
+//! | Best for | Large types, Rc-wrapped | Primitives, Copy types | Zero-copy SBE, idle strategy |
+//! | Zero-copy | No (stores owned T) | No (stores owned T) | Yes (process in callback) |
 //!
 //! # Peek-Based Composition Pattern
 //!
@@ -76,7 +115,9 @@
 //! See `examples/fan_out_pattern.rs` for a complete example.
 
 mod builder;
+mod source;
 mod subscriber;
 
 pub use builder::AeronSubscriberNodeBuilder;
+pub use source::MutableSource;
 pub use subscriber::{AeronSubscriberValueNode, AeronSubscriberValueRefNode};
