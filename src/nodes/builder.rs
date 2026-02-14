@@ -54,8 +54,8 @@ where
     }
 
     /// Sets the Aeron subscriber to poll for messages.
-    pub fn subscriber(mut self, subscriber: S) -> Self {
-        self.subscriber = Some(subscriber);
+    pub fn subscriber(mut self, subscriber: impl Into<S>) -> Self {
+        self.subscriber = Some(subscriber.into());
         self
     }
 
@@ -66,8 +66,8 @@ where
     }
 
     /// Sets the default value before any messages are received.
-    pub fn default(mut self, value: T) -> Self {
-        self.default_value = Some(value);
+    pub fn default(mut self, value: impl Into<T>) -> Self {
+        self.default_value = Some(value.into());
         self
     }
 
@@ -193,7 +193,7 @@ mod tests {
         let subscriber = MockSubscriber::new(vec![42i64.to_le_bytes().to_vec()]);
 
         // When: build() is called
-        let node = AeronSubscriberNodeBuilder::new()
+        let node = AeronSubscriberNodeBuilder::<i64, _, MockSubscriber>::new()
             .subscriber(subscriber)
             .parser(i64_parser)
             .default(0i64)
@@ -209,7 +209,7 @@ mod tests {
         let subscriber = MockSubscriber::new(vec![]);
 
         // When: build_ref() is called
-        let node = AeronSubscriberNodeBuilder::new()
+        let node = AeronSubscriberNodeBuilder::<i64, _, MockSubscriber>::new()
             .subscriber(subscriber)
             .parser(i64_parser)
             .default(0i64)
@@ -223,7 +223,7 @@ mod tests {
     fn given_node_when_peek_value_called_then_returns_value() {
         // Given: A built node with messages
         let subscriber = MockSubscriber::new(vec![99i64.to_le_bytes().to_vec()]);
-        let node = AeronSubscriberNodeBuilder::new()
+        let node = AeronSubscriberNodeBuilder::<i64, _, MockSubscriber>::new()
             .subscriber(subscriber)
             .parser(i64_parser)
             .default(0i64)
@@ -242,7 +242,7 @@ mod tests {
         // Given: A builder without subscriber
         // When: build() is called
         // Then: Panics with clear message
-        let _ = AeronSubscriberNodeBuilder::<i64, _, MockSubscriber>::new()
+        let _ = AeronSubscriberNodeBuilder::<i64, fn(&[u8]) -> Option<i64>, MockSubscriber>::new()
             .parser(i64_parser)
             .default(0i64)
             .build();
@@ -253,7 +253,7 @@ mod tests {
     fn given_builder_when_parser_missing_then_panics() {
         // Given: A builder without parser
         let subscriber = MockSubscriber::new(vec![]);
-        let builder = AeronSubscriberNodeBuilder::<i64, fn(&[u8]) -> Option<i64>, _>::new()
+        let builder = AeronSubscriberNodeBuilder::<i64, fn(&[u8]) -> Option<i64>, MockSubscriber>::new()
             .subscriber(subscriber)
             .default(0i64);
 
@@ -270,7 +270,7 @@ mod tests {
 
         // When: build() is called
         // Then: Panics with clear message
-        let _ = AeronSubscriberNodeBuilder::new()
+        let _ = AeronSubscriberNodeBuilder::<i64, _, MockSubscriber>::new()
             .subscriber(subscriber)
             .parser(i64_parser)
             .build();

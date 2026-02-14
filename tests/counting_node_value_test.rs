@@ -107,7 +107,7 @@ fn given_aeron_messages_when_value_node_processes_then_counts_correctly() {
 
     // Create AeronSubscriberValueNode using the builder pattern
     // Returns Rc<RefCell<...>> which can be cloned for the graph and used for upstream
-    let subscriber_node = AeronSubscriberValueNode::builder()
+    let subscriber_node = AeronSubscriberValueNode::<i64, _, RusteronSubscriber>::builder()
         .subscriber(subscriber)
         .parser(parser)
         .default(0i64)

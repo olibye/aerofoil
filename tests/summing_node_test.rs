@@ -119,7 +119,7 @@ fn given_aeron_messages_when_summing_node_processes_then_calculates_correct_sum(
 
     // Create AeronSubscriberValueRefNode using the builder pattern
     // Returns Rc<RefCell<...>> which can be cloned for the graph and used for upstream
-    let subscriber_node = AeronSubscriberValueRefNode::builder()
+    let subscriber_node = AeronSubscriberValueRefNode::<i64, _, RusteronSubscriber>::builder()
         .subscriber(subscriber)
         .parser(parser)
         .default(0i64)

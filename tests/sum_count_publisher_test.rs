@@ -137,7 +137,7 @@ fn given_input_stream_when_fan_out_graph_runs_then_publishes_sum_and_count() {
     };
 
     // Build input subscriber node (shared by both downstream nodes)
-    let subscriber_node = AeronSubscriberValueNode::builder()
+    let subscriber_node = AeronSubscriberValueNode::<i64, _, RusteronSubscriber>::builder()
         .subscriber(input_subscriber)
         .parser(parser)
         .default(0i64)
