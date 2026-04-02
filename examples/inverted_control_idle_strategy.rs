@@ -253,7 +253,10 @@ fn main() {
     let start_time = Instant::now();
 
     println!("Starting Aeron-driven polling loop...");
-    println!("(Publish 24-byte messages to aeron:ipc stream {} to see processing)", stream_id);
+    println!(
+        "(Publish 24-byte messages to aeron:ipc stream {} to see processing)",
+        stream_id
+    );
     println!("Message format: [f64 price][i64 qty][char side][padding]");
     println!();
 
@@ -308,10 +311,7 @@ fn main() {
     let elapsed = start_time.elapsed();
     println!();
     println!("Completed {} cycles in {:?}", cycle_count, elapsed);
-    println!(
-        "Average cycle time: {:?}",
-        elapsed / cycle_count as u32
-    );
+    println!("Average cycle time: {:?}", elapsed / cycle_count as u32);
 
     // Print final stats from processor node
     println!();

@@ -21,6 +21,10 @@ impl RusteronPublisher {
 }
 
 impl AeronPublisher for RusteronPublisher {
+    fn is_connected(&self) -> bool {
+        self.publication.is_connected()
+    }
+
     fn offer(&mut self, buffer: &[u8]) -> Result<i64, TransportError> {
         // Call Rusteron's offer method
         // Type annotation required because offer is generic over the reserved value handler

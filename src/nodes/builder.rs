@@ -7,7 +7,7 @@
 //!
 //! See `examples/subscriber_node_value_access.rs` for a complete example.
 
-use crate::transport::AeronSubscriber;
+use crate::transport::{AeronSubscriber, TransportError};
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
@@ -28,7 +28,7 @@ use super::{AeronSubscriberValueNode, AeronSubscriberValueRefNode};
 pub struct AeronSubscriberNodeBuilder<T, F, S>
 where
     T: Element,
-    F: FnMut(&[u8]) -> Option<T>,
+    F: FnMut(&[u8]) -> Result<Option<T>, TransportError>,
     S: AeronSubscriber,
 {
     subscriber: Option<S>,
@@ -40,7 +40,7 @@ where
 impl<T, F, S> AeronSubscriberNodeBuilder<T, F, S>
 where
     T: Element,
-    F: FnMut(&[u8]) -> Option<T> + 'static,
+    F: FnMut(&[u8]) -> Result<Option<T>, TransportError> + 'static,
     S: AeronSubscriber + 'static,
 {
     /// Creates a new builder with no fields set.
@@ -59,8 +59,15 @@ where
         self
     }
 
-    /// Sets the parser function for converting byte fragments to typed values.
-    pub fn parser(mut self, parser: F) -> Self {
+    /// Sets a fallible parser that returns `Result<Option<T>, TransportError>`.
+    ///
+    /// Use this when the parser needs to report errors back to the graph runner.
+    /// For infallible parsers that return `Option<T>`, use [`.parser()`](AeronSubscriberNodeBuilder::parser) instead.
+    ///
+    /// - `Ok(Some(value))` — successfully parsed
+    /// - `Ok(None)` — message skipped (e.g. wrong type)
+    /// - `Err(e)` — parse error propagated to the graph
+    pub fn try_parser(mut self, parser: F) -> Self {
         self.parser = Some(parser);
         self
     }
@@ -129,11 +136,61 @@ where
 impl<T, F, S> Default for AeronSubscriberNodeBuilder<T, F, S>
 where
     T: Element,
-    F: FnMut(&[u8]) -> Option<T> + 'static,
+    F: FnMut(&[u8]) -> Result<Option<T>, TransportError> + 'static,
     S: AeronSubscriber + 'static,
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Infallible parser support.
+///
+/// The `.parser()` method wraps an `FnMut(&[u8]) -> Option<T>` into
+/// `Ok(f(buf))`, providing the common-case API for parsers that don't
+/// need error propagation.
+impl<T, S> AeronSubscriberNodeBuilder<T, fn(&[u8]) -> Result<Option<T>, TransportError>, S>
+where
+    T: Element + 'static,
+    S: AeronSubscriber + 'static,
+{
+    /// Sets an infallible parser that returns `Option<T>`, wrapping it into `Ok(f(buf))`.
+    ///
+    /// This is the common-case API. For parsers that need to report errors,
+    /// use [`.try_parser()`](AeronSubscriberNodeBuilder::try_parser) instead.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let node = AeronSubscriberValueNode::builder()
+    ///     .subscriber(subscriber)
+    ///     .parser(|buf| {
+    ///         if buf.len() >= 8 {
+    ///             Some(i64::from_le_bytes(buf[0..8].try_into().ok()?))
+    ///         } else {
+    ///             None
+    ///         }
+    ///     })
+    ///     .default(0i64)
+    ///     .build();
+    /// ```
+    #[allow(clippy::type_complexity)]
+    pub fn parser<G: FnMut(&[u8]) -> Option<T> + 'static>(
+        self,
+        mut parser: G,
+    ) -> AeronSubscriberNodeBuilder<
+        T,
+        impl FnMut(&[u8]) -> Result<Option<T>, TransportError> + 'static,
+        S,
+    > {
+        AeronSubscriberNodeBuilder {
+            subscriber: self.subscriber,
+            parser: Some(move |buf: &[u8]| -> Result<Option<T>, TransportError> {
+                Ok(parser(buf))
+            }),
+            default_value: self.default_value,
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -178,6 +235,15 @@ mod tests {
         }
     }
 
+    fn i64_try_parser(fragment: &[u8]) -> Result<Option<i64>, TransportError> {
+        if fragment.len() >= 8 {
+            let bytes: [u8; 8] = fragment[0..8].try_into().unwrap();
+            Ok(Some(i64::from_le_bytes(bytes)))
+        } else {
+            Ok(None)
+        }
+    }
+
     fn i64_parser(fragment: &[u8]) -> Option<i64> {
         if fragment.len() >= 8 {
             let bytes: [u8; 8] = fragment[0..8].try_into().ok()?;
@@ -188,62 +254,50 @@ mod tests {
     }
 
     #[test]
-    fn given_builder_when_all_fields_set_then_builds_valid_node() {
-        // Given: A builder with all fields set
+    fn given_builder_when_try_parser_set_then_builds_valid_node() {
         let subscriber = MockSubscriber::new(vec![42i64.to_le_bytes().to_vec()]);
 
-        // When: build() is called
         let node = AeronSubscriberNodeBuilder::new()
             .subscriber(subscriber)
-            .parser(i64_parser)
+            .try_parser(i64_try_parser)
             .default(0i64)
             .build();
 
-        // Then: Returns valid Rc<RefCell<Node>>
         assert!(Rc::strong_count(&node) >= 1);
     }
 
     #[test]
     fn given_builder_when_build_ref_called_then_builds_value_ref_node() {
-        // Given: A builder with all fields set
         let subscriber = MockSubscriber::new(vec![]);
 
-        // When: build_ref() is called
         let node = AeronSubscriberNodeBuilder::new()
             .subscriber(subscriber)
-            .parser(i64_parser)
+            .try_parser(i64_try_parser)
             .default(0i64)
             .build_ref();
 
-        // Then: node can access values via peek_ref
         assert_eq!(*node.borrow().peek_ref(), 0);
     }
 
     #[test]
     fn given_node_when_peek_value_called_then_returns_value() {
-        // Given: A built node with messages
         let subscriber = MockSubscriber::new(vec![99i64.to_le_bytes().to_vec()]);
         let node = AeronSubscriberNodeBuilder::new()
             .subscriber(subscriber)
-            .parser(i64_parser)
+            .try_parser(i64_try_parser)
             .default(0i64)
             .build();
 
-        // When: peek_value is called (before polling, returns default)
         let value = node.peek_value();
 
-        // Then: Returns the default value
         assert_eq!(value, 0);
     }
 
     #[test]
     #[should_panic(expected = "subscriber is required")]
     fn given_builder_when_subscriber_missing_then_panics() {
-        // Given: A builder without subscriber
-        // When: build() is called
-        // Then: Panics with clear message
         let _ = AeronSubscriberNodeBuilder::<i64, _, MockSubscriber>::new()
-            .parser(i64_parser)
+            .try_parser(i64_try_parser)
             .default(0i64)
             .build();
     }
@@ -251,28 +305,52 @@ mod tests {
     #[test]
     #[should_panic(expected = "parser is required")]
     fn given_builder_when_parser_missing_then_panics() {
-        // Given: A builder without parser
         let subscriber = MockSubscriber::new(vec![]);
-        let builder = AeronSubscriberNodeBuilder::<i64, fn(&[u8]) -> Option<i64>, _>::new()
-            .subscriber(subscriber)
-            .default(0i64);
+        let builder = AeronSubscriberNodeBuilder::<
+            i64,
+            fn(&[u8]) -> Result<Option<i64>, TransportError>,
+            _,
+        >::new()
+        .subscriber(subscriber)
+        .default(0i64);
 
-        // When: build() is called
-        // Then: Panics with clear message
         let _ = builder.build();
     }
 
     #[test]
     #[should_panic(expected = "default value is required")]
     fn given_builder_when_default_missing_then_panics() {
-        // Given: A builder without default value
         let subscriber = MockSubscriber::new(vec![]);
 
-        // When: build() is called
-        // Then: Panics with clear message
         let _ = AeronSubscriberNodeBuilder::new()
             .subscriber(subscriber)
-            .parser(i64_parser)
+            .try_parser(i64_try_parser)
             .build();
+    }
+
+    #[test]
+    fn given_parser_when_build_then_wraps_option_in_ok() {
+        let subscriber = MockSubscriber::new(vec![42i64.to_le_bytes().to_vec()]);
+
+        let node = AeronSubscriberValueNode::builder()
+            .subscriber(subscriber)
+            .parser(i64_parser)
+            .default(0i64)
+            .build();
+
+        assert_eq!(node.peek_value(), 0);
+    }
+
+    #[test]
+    fn given_parser_when_build_ref_then_wraps_option_in_ok() {
+        let subscriber = MockSubscriber::new(vec![]);
+
+        let node = AeronSubscriberValueRefNode::builder()
+            .subscriber(subscriber)
+            .parser(i64_parser)
+            .default(0i64)
+            .build_ref();
+
+        assert_eq!(*node.borrow().peek_ref(), 0);
     }
 }

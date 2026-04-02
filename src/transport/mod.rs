@@ -11,6 +11,23 @@ pub use error::TransportError;
 
 pub mod rusteron;
 
+/// Lifecycle status of an Aeron transport endpoint.
+///
+/// Represents the connection state of a publisher or subscriber,
+/// enabling status monitoring and lifecycle tracking.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum AeronStatus {
+    /// The endpoint is connected and actively communicating.
+    Connected,
+    /// The endpoint is not connected (initial state).
+    #[default]
+    Disconnected,
+    /// The endpoint is experiencing back-pressure.
+    BackPressured,
+    /// The endpoint has been closed.
+    Closed,
+}
+
 /// Publishes messages to an Aeron channel.
 ///
 /// This trait provides two publication methods:
@@ -41,6 +58,15 @@ pub trait AeronPublisher {
     /// - `Err(TransportError::BackPressure)` - Buffer is full, retry later
     /// - `Err(_)` - Other transport error occurred
     fn try_claim<'a>(&'a mut self, length: usize) -> Result<ClaimBuffer<'a>, TransportError>;
+
+    /// Returns whether this publication is currently connected to at least one subscriber.
+    ///
+    /// # Returns
+    ///
+    /// `true` if connected, `false` otherwise. Default implementation returns `false`.
+    fn is_connected(&self) -> bool {
+        false
+    }
 }
 
 /// Subscribes to and receives messages from an Aeron channel.
@@ -62,4 +88,87 @@ pub trait AeronSubscriber {
     fn poll<F>(&mut self, handler: F) -> Result<usize, TransportError>
     where
         F: FnMut(&FragmentBuffer) -> Result<(), TransportError>;
+
+    /// Returns whether this subscription is currently connected to at least one publication.
+    ///
+    /// # Returns
+    ///
+    /// `true` if connected, `false` otherwise. Default implementation returns `false`.
+    fn is_connected(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MockPublisher;
+
+    impl AeronPublisher for MockPublisher {
+        fn offer(&mut self, _buffer: &[u8]) -> Result<i64, TransportError> {
+            Ok(0)
+        }
+
+        fn try_claim<'a>(&'a mut self, _length: usize) -> Result<ClaimBuffer<'a>, TransportError> {
+            Err(TransportError::Invalid("mock".to_string()))
+        }
+    }
+
+    struct MockSubscriber;
+
+    impl AeronSubscriber for MockSubscriber {
+        fn poll<F>(&mut self, _handler: F) -> Result<usize, TransportError>
+        where
+            F: FnMut(&FragmentBuffer) -> Result<(), TransportError>,
+        {
+            Ok(0)
+        }
+    }
+
+    struct ConnectedSubscriber;
+
+    impl AeronSubscriber for ConnectedSubscriber {
+        fn poll<F>(&mut self, _handler: F) -> Result<usize, TransportError>
+        where
+            F: FnMut(&FragmentBuffer) -> Result<(), TransportError>,
+        {
+            Ok(0)
+        }
+
+        fn is_connected(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn given_aeron_status_when_default_then_disconnected() {
+        let status = AeronStatus::default();
+        assert_eq!(status, AeronStatus::Disconnected);
+    }
+
+    #[test]
+    fn given_aeron_status_when_clone_then_equal() {
+        let status = AeronStatus::Connected;
+        let cloned = status.clone();
+        assert_eq!(status, cloned);
+    }
+
+    #[test]
+    fn given_publisher_when_is_connected_default_then_returns_false() {
+        let publisher = MockPublisher;
+        assert!(!publisher.is_connected());
+    }
+
+    #[test]
+    fn given_subscriber_when_is_connected_default_then_returns_false() {
+        let subscriber = MockSubscriber;
+        assert!(!subscriber.is_connected());
+    }
+
+    #[test]
+    fn given_subscriber_when_is_connected_overridden_then_returns_true() {
+        let subscriber = ConnectedSubscriber;
+        assert!(subscriber.is_connected());
+    }
 }
