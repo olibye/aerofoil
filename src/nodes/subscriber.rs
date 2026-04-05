@@ -4,7 +4,10 @@
 //! Wingfoil nodes that bridge Aeron transport with Wingfoil's stream processing
 //! framework using Element types.
 
-use crate::transport::{AeronSubscriber, TransportError};
+use crate::nodes::MutableSource;
+use crate::transport::{AeronStatus, AeronSubscriber, TransportError};
+use std::cell::RefCell;
+use std::rc::Rc;
 use wingfoil::{Element, GraphState, MutableNode, StreamPeekRef, UpStreams};
 
 /// Internal shared implementation for Aeron subscriber nodes.
@@ -21,6 +24,8 @@ where
     subscriber: S,
     parser: F,
     current_value: T,
+    status: Option<Rc<RefCell<MutableSource<AeronStatus>>>>,
+    last_connected: bool,
 }
 
 impl<T, F, S> AeronSubscriberCore<T, F, S>
@@ -34,11 +39,28 @@ where
             subscriber,
             parser,
             current_value: initial_value,
+            status: None,
+            last_connected: false,
+        }
+    }
+
+    fn with_status(
+        subscriber: S,
+        parser: F,
+        initial_value: T,
+        status: Rc<RefCell<MutableSource<AeronStatus>>>,
+    ) -> Self {
+        Self {
+            subscriber,
+            parser,
+            current_value: initial_value,
+            status: Some(status),
+            last_connected: false,
         }
     }
 
     fn poll_and_process(&mut self) -> Result<usize, TransportError> {
-        self.subscriber.poll(|fragment| {
+        let count = self.subscriber.poll(|fragment| {
             match (self.parser)(fragment) {
                 Ok(Some(parsed_value)) => {
                     self.current_value = parsed_value;
@@ -47,7 +69,21 @@ where
                 Err(e) => return Err(e),
             }
             Ok(())
-        })
+        })?;
+
+        if let Some(status) = &self.status {
+            let connected = self.subscriber.is_connected();
+            if connected != self.last_connected {
+                status.borrow_mut().set(if connected {
+                    AeronStatus::Connected
+                } else {
+                    AeronStatus::Disconnected
+                });
+                self.last_connected = connected;
+            }
+        }
+
+        Ok(count)
     }
 
     fn current_value(&self) -> &T {
@@ -360,6 +396,36 @@ where
     }
 }
 
+/// Return type for [`aeron_sub`]: `(data_node, status_source)`.
+pub type DualStream<T, F, S> = (
+    Rc<RefCell<AeronSubscriberValueRefNode<T, F, S>>>,
+    Rc<RefCell<MutableSource<AeronStatus>>>,
+);
+
+/// Creates a dual-stream Aeron subscriber returning data and status streams.
+///
+/// This mirrors Wingfoil's `zmq_sub<T>()` pattern: a single function call
+/// returns both a data node (for parsed messages) and a status source (for
+/// connection state transitions). The data node checks `is_connected()` each
+/// cycle and updates the status source only on transitions.
+pub fn aeron_sub<T, F, S>(subscriber: S, parser: F, initial_value: T) -> DualStream<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Result<Option<T>, TransportError> + 'static,
+    S: AeronSubscriber + 'static,
+{
+    let status = Rc::new(RefCell::new(MutableSource::new(AeronStatus::Disconnected)));
+    let node = AeronSubscriberValueRefNode {
+        core: AeronSubscriberCore::with_status(
+            subscriber,
+            parser,
+            initial_value,
+            Rc::clone(&status),
+        ),
+    };
+    (Rc::new(RefCell::new(node)), status)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,6 +466,43 @@ mod tests {
             }
 
             Ok(count)
+        }
+    }
+
+    struct ConnectedMockSubscriber {
+        messages: Vec<Vec<u8>>,
+        connected: bool,
+    }
+
+    impl ConnectedMockSubscriber {
+        fn new(messages: Vec<Vec<u8>>, connected: bool) -> Self {
+            Self {
+                messages,
+                connected,
+            }
+        }
+    }
+
+    impl AeronSubscriber for ConnectedMockSubscriber {
+        fn poll<H>(&mut self, mut handler: H) -> Result<usize, TransportError>
+        where
+            H: FnMut(&FragmentBuffer) -> Result<(), TransportError>,
+        {
+            let count = self.messages.len();
+            for message in self.messages.drain(..) {
+                let header = FragmentHeader {
+                    position: 0,
+                    session_id: 0,
+                    stream_id: 0,
+                };
+                let fragment = FragmentBuffer::new(&message, header);
+                handler(&fragment)?;
+            }
+            Ok(count)
+        }
+
+        fn is_connected(&self) -> bool {
+            self.connected
         }
     }
 
@@ -529,5 +632,79 @@ mod tests {
 
         node.core.poll_and_process().unwrap();
         assert_eq!(*node.peek_ref(), 42);
+    }
+
+    // --- Dual-stream (aeron_sub) tests ---
+
+    #[test]
+    fn given_connected_subscriber_when_aeron_sub_then_status_transitions_to_connected() {
+        let subscriber = ConnectedMockSubscriber::new(vec![], true);
+        let (data_node, status) = aeron_sub(subscriber, fallible_i64_parser, 0i64);
+
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+
+        assert_eq!(*status.borrow().get(), AeronStatus::Connected);
+    }
+
+    #[test]
+    fn given_disconnected_subscriber_when_polled_then_status_stays_disconnected() {
+        let subscriber = ConnectedMockSubscriber::new(vec![], false);
+        let (data_node, status) = aeron_sub(subscriber, fallible_i64_parser, 0i64);
+
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+
+        assert_eq!(*status.borrow().get(), AeronStatus::Disconnected);
+    }
+
+    #[test]
+    fn given_status_unchanged_when_cycle_then_no_status_update() {
+        let subscriber = ConnectedMockSubscriber::new(vec![], true);
+        let (data_node, status) = aeron_sub(subscriber, fallible_i64_parser, 0i64);
+
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+        assert_eq!(*status.borrow().get(), AeronStatus::Connected);
+
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+        assert_eq!(*status.borrow().get(), AeronStatus::Connected);
+    }
+
+    #[test]
+    fn given_valid_messages_when_aeron_sub_polled_then_data_node_updates() {
+        let msg1 = 42i64.to_le_bytes().to_vec();
+        let msg2 = 100i64.to_le_bytes().to_vec();
+        let subscriber = ConnectedMockSubscriber::new(vec![msg1, msg2], false);
+        let (data_node, _status) = aeron_sub(subscriber, fallible_i64_parser, 0i64);
+
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+
+        assert_eq!(*data_node.borrow().peek_ref(), 100);
+    }
+
+    #[test]
+    fn given_parser_error_when_aeron_sub_cycle_then_error_propagated() {
+        let msg = 42i64.to_le_bytes().to_vec();
+        let subscriber = ConnectedMockSubscriber::new(vec![msg], false);
+
+        let error_parser = |_: &[u8]| -> Result<Option<i64>, TransportError> {
+            Err(TransportError::Invalid("parse failed".to_string()))
+        };
+
+        let (data_node, _status) = aeron_sub(subscriber, error_parser, 0i64);
+
+        let result = data_node.borrow_mut().core.poll_and_process();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn given_connection_lost_when_cycle_then_status_transitions_to_disconnected() {
+        let subscriber = ConnectedMockSubscriber::new(vec![], true);
+        let (data_node, status) = aeron_sub(subscriber, fallible_i64_parser, 0i64);
+
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+        assert_eq!(*status.borrow().get(), AeronStatus::Connected);
+
+        data_node.borrow_mut().core.subscriber.connected = false;
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+        assert_eq!(*status.borrow().get(), AeronStatus::Disconnected);
     }
 }

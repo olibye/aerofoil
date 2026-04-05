@@ -115,9 +115,13 @@
 //! See `examples/fan_out_pattern.rs` for a complete example.
 
 mod builder;
+mod publisher;
 mod source;
 mod subscriber;
 
 pub use builder::AeronSubscriberNodeBuilder;
+pub use publisher::{AeronPub, AeronPublisherNode};
 pub use source::MutableSource;
-pub use subscriber::{AeronSubscriberValueNode, AeronSubscriberValueRefNode};
+pub use subscriber::{
+    aeron_sub, AeronSubscriberValueNode, AeronSubscriberValueRefNode, DualStream,
+};
