@@ -1,0 +1,33 @@
+#!/bin/bash
+# Pre-commit hook to enforce Zero-Defect Check-in Workflow
+
+set -e
+
+echo "==========================================================="
+echo "🦀 Zero-Defect Check-in Gate: Running Pre-commit Validation"
+echo "==========================================================="
+
+echo "🔍 1. Checking formatting (cargo fmt)..."
+cargo fmt --check
+if [ $? -ne 0 ]; then
+    echo "❌ Formatting failed. Run 'cargo fmt' to fix."
+    exit 1
+fi
+
+echo "🧹 2. Running Clippy (cargo clippy -D warnings)..."
+cargo clippy --lib -- -D warnings
+if [ $? -ne 0 ]; then
+    echo "❌ Clippy found warnings or errors. Please fix them."
+    exit 1
+fi
+
+echo "🧪 3. Running Unit Tests (cargo test)..."
+cargo test --lib
+if [ $? -ne 0 ]; then
+    echo "❌ Tests failed. Please fix them before committing."
+    exit 1
+fi
+
+echo "✅ All Zero-Defect quality gates passed! Committing..."
+echo "==========================================================="
+exit 0
