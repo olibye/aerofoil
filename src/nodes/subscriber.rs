@@ -60,7 +60,7 @@ where
     }
 
     fn poll_and_process(&mut self) -> Result<usize, TransportError> {
-        let count = self.subscriber.poll(|fragment| {
+        let poll_result = self.subscriber.poll(|fragment| {
             match (self.parser)(fragment) {
                 Ok(Some(parsed_value)) => {
                     self.current_value = parsed_value;
@@ -69,7 +69,7 @@ where
                 Err(e) => return Err(e),
             }
             Ok(())
-        })?;
+        });
 
         if let Some(status) = &self.status {
             let connected = self.subscriber.is_connected();
@@ -83,7 +83,7 @@ where
             }
         }
 
-        Ok(count)
+        poll_result
     }
 
     fn current_value(&self) -> &T {

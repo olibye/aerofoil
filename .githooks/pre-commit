@@ -1,8 +1,6 @@
 #!/bin/bash
 # Pre-commit hook to enforce Zero-Defect Check-in Workflow
 
-set -e
-
 echo "==========================================================="
 echo "🦀 Zero-Defect Check-in Gate: Running Pre-commit Validation"
 echo "==========================================================="

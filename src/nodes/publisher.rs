@@ -49,10 +49,12 @@ where
         let current = upstream.peek_ref();
         if *current != self.last_value {
             let bytes = (self.serializer)(current);
-            self.last_value = current.clone();
+            let cloned = current.clone();
             drop(upstream);
             match self.publisher.offer(&bytes) {
-                Ok(_) => {}
+                Ok(_) => {
+                    self.last_value = cloned;
+                }
                 Err(TransportError::BackPressure) => {} // skip, retry next cycle
                 Err(e) => return Err(e.into()),
             }
@@ -66,7 +68,7 @@ where
     T: Element + PartialEq,
     P: AeronPublisher + 'static,
     Ser: FnMut(&T) -> Vec<u8> + 'static,
-    U: StreamPeekRef<T> + 'static,
+    U: StreamPeekRef<T> + MutableNode + 'static,
 {
     fn cycle(&mut self, _state: &mut GraphState) -> anyhow::Result<bool> {
         self.poll_and_publish()?;
@@ -79,7 +81,8 @@ where
     }
 
     fn upstreams(&self) -> UpStreams {
-        UpStreams::none()
+        let node: Rc<dyn wingfoil::Node> = self.upstream.clone();
+        UpStreams::new(vec![node], vec![])
     }
 }
 
@@ -98,7 +101,7 @@ pub trait AeronPub<T: Element, U: StreamPeekRef<T>> {
 impl<T, U> AeronPub<T, U> for Rc<RefCell<U>>
 where
     T: Element + PartialEq,
-    U: StreamPeekRef<T> + 'static,
+    U: StreamPeekRef<T> + MutableNode + 'static,
 {
     fn aeron_pub<P, Ser>(&self, publisher: P, serializer: Ser) -> AeronPublisherNode<T, P, Ser, U>
     where
