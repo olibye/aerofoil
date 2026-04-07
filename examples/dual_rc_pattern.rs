@@ -8,7 +8,7 @@
 //! Run with: `cargo run --example dual_rc_pattern`
 //!
 //! Note: Requires the Aeron media driver to be running.
-//! See openspec/integration-test.md for setup instructions.
+//! See docs/development-guide.md for setup instructions.
 
 use aerofoil::nodes::AeronSubscriberValueRefNode;
 use aerofoil::transport::rusteron::RusteronSubscriber;

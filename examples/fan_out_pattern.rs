@@ -8,7 +8,7 @@
 //! Run with: `cargo run --example fan_out_pattern`
 //!
 //! Note: Requires the Aeron media driver to be running.
-//! See openspec/integration-test.md for setup instructions.
+//! See docs/development-guide.md for setup instructions.
 
 use aerofoil::nodes::AeronSubscriberValueNode;
 use aerofoil::transport::rusteron::{RusteronPublisher, RusteronSubscriber};

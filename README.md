@@ -54,7 +54,7 @@ fn publish_mut<P: AeronPublisher>(publisher: &mut P, data: &mut [u8]) {
 
 ## Running Examples
 
-Examples require the Aeron media driver. See `openspec/integration-test.md` for setup.
+Examples require the Aeron media driver. See `docs/development-guide.md` for setup.
 
 ```bash
 # With rusteron (default)
@@ -80,8 +80,8 @@ cargo test --lib
 ## Documentation
 
 - `cargo doc --open` - API documentation
-- `openspec/project.md` - Project conventions
-- `openspec/integration-test.md` - Media driver setup
+- `docs/architecture.md` - Architecture and conventions
+- `docs/development-guide.md` - Testing and media driver setup
 
 ## Architecture
 

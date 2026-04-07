@@ -34,7 +34,7 @@
 //! ```
 //!
 //! If you don't have Aeron installed, the test will be skipped (not compiled).
-//! For installation instructions, see openspec/integration-test.md
+//! For installation instructions, see docs/development-guide.md
 
 mod common;
 

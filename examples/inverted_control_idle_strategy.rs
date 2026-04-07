@@ -33,7 +33,7 @@
 //! Run with: `cargo run --example inverted_control_idle_strategy`
 //!
 //! Note: Requires the Aeron media driver to be running.
-//! See openspec/integration-test.md for setup instructions.
+//! See docs/development-guide.md for setup instructions.
 
 use aerofoil::nodes::MutableSource;
 use aerofoil::transport::rusteron::RusteronSubscriber;
@@ -182,7 +182,7 @@ fn main() {
         Err(e) => {
             eprintln!("Failed to create Aeron context: {:?}", e);
             eprintln!("Make sure the Aeron media driver is running.");
-            eprintln!("See openspec/integration-test.md for setup instructions.");
+            eprintln!("See docs/development-guide.md for setup instructions.");
             return;
         }
     };
