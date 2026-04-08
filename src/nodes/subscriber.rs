@@ -147,6 +147,18 @@ where
     core: AeronSubscriberCore<T, F, S>,
 }
 
+impl<T, F, S> std::fmt::Debug for AeronSubscriberValueRefNode<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Result<Option<T>, TransportError>,
+    S: AeronSubscriber,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AeronSubscriberValueRefNode")
+            .finish_non_exhaustive()
+    }
+}
+
 impl<T, F, S> AeronSubscriberValueRefNode<T, F, S>
 where
     T: Element,
@@ -295,6 +307,18 @@ where
     S: AeronSubscriber,
 {
     core: AeronSubscriberCore<T, F, S>,
+}
+
+impl<T, F, S> std::fmt::Debug for AeronSubscriberValueNode<T, F, S>
+where
+    T: Element,
+    F: FnMut(&[u8]) -> Result<Option<T>, TransportError>,
+    S: AeronSubscriber,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AeronSubscriberValueNode")
+            .finish_non_exhaustive()
+    }
 }
 
 impl<T, F, S> AeronSubscriberValueNode<T, F, S>

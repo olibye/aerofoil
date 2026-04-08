@@ -12,6 +12,12 @@ pub struct RusteronSubscriber {
     subscription: AeronSubscription,
 }
 
+impl std::fmt::Debug for RusteronSubscriber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RusteronSubscriber").finish_non_exhaustive()
+    }
+}
+
 impl RusteronSubscriber {
     /// Creates a new `RusteronSubscriber` wrapping the given Rusteron subscription.
     pub fn new(subscription: AeronSubscription) -> Self {

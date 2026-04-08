@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Common test utilities for integration tests.
 //!
 //! This module provides shared helpers used across integration tests,

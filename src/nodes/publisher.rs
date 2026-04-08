@@ -26,6 +26,18 @@ where
     _marker: PhantomData<T>,
 }
 
+impl<T, P, Ser, U> std::fmt::Debug for AeronPublisherNode<T, P, Ser, U>
+where
+    T: Element,
+    P: AeronPublisher,
+    Ser: FnMut(&T) -> Vec<u8>,
+    U: StreamPeekRef<T>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AeronPublisherNode").finish_non_exhaustive()
+    }
+}
+
 impl<T, P, Ser, U> AeronPublisherNode<T, P, Ser, U>
 where
     T: Element + PartialEq,

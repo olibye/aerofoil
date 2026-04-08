@@ -96,4 +96,4 @@ src/
 
 ## License
 
-See LICENSE file.
+Licensed under the [MIT License](LICENSE).

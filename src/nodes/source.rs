@@ -107,6 +107,7 @@ use wingfoil::{Element, GraphState, MutableNode, StreamPeekRef, UpStreams};
 /// # Example
 ///
 /// See `examples/inverted_control_idle_strategy.rs` for a complete runnable example.
+#[derive(Debug)]
 pub struct MutableSource<T: Element> {
     value: T,
 }

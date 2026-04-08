@@ -121,6 +121,7 @@ where
         }
     }
 
+    #[allow(dead_code)]
     fn print_stats(&self) {
         println!("  Total volume processed: {}", self.total_volume);
         println!("  Messages processed: {}", self.message_count);

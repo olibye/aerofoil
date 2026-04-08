@@ -8,6 +8,7 @@ use std::fmt;
 /// client implementations (Rusteron, aeron-rs) and enables uniform error
 /// handling in application code.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum TransportError {
     /// Back-pressure condition: buffer is full, retry later.
     ///
