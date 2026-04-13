@@ -184,10 +184,8 @@ Import: `mod common; use common::{MediaDriverGuard, ...};`
 ### Documentation Conventions
 
 - Document design decisions using unit test cases
-- Document latency compromises between rusteron and aeron-rs
 - Document cases of clone and copy with explanations
 - Never add code in markup documentation - reference working code files instead
-- Keep rusteron documentation separate from aeron-rs documentation in their own modules
 - Doctests allowed only for simple 1-5 line patterns
 
 ### General

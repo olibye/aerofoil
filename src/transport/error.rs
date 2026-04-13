@@ -4,9 +4,8 @@ use std::fmt;
 
 /// Unified error type for transport operations.
 ///
-/// This error type provides a consistent interface across different Aeron
-/// client implementations (Rusteron, aeron-rs) and enables uniform error
-/// handling in application code.
+/// This error type wraps errors from the Rusteron Aeron client and enables
+/// uniform error handling in application code.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum TransportError {

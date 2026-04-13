@@ -9,8 +9,7 @@ Aerofoil is a Rust library providing Wingfoil adapters for Aeron messaging. It e
 | Component | Tech | Role |
 | :--- | :--- | :--- |
 | **Core Framework** | [Wingfoil](https://docs.rs/wingfoil/latest/wingfoil/) | Stream processing graph framework |
-| **Transport (default)** | [Rusteron](https://github.com/gsrxyz/rusteron) | C++ Aeron client FFI wrapper |
-| **Transport (pure Rust)** | [aeron-rs](https://github.com/UnitedTraders/aeron-rs) | Pure Rust Aeron client |
+| **Transport** | [Rusteron](https://github.com/gsrxyz/rusteron) | C++ Aeron client FFI wrapper |
 | **Mocking** | [Mockall](https://github.com/asomers/mockall) | Unit test mock generation |
 | **Benchmarking** | [Criterion](https://docs.rs/criterion/latest/criterion/) | Statistical benchmarking |
 
@@ -24,25 +23,25 @@ Aerofoil is a Rust library providing Wingfoil adapters for Aeron messaging. It e
 
 ### Transport Trait Abstraction
 
-Trait-based polymorphism enables zero-cost switching between rusteron and aeron-rs backends:
+Trait-based polymorphism keeps the Aeron client implementation behind a stable interface, enabling mock implementations for tests and leaving room for alternative backends in future:
 
-- **`AeronPublisher`** trait: `offer(&[u8])`, `offer_mut(&mut [u8])`, `try_claim()` methods
+- **`AeronPublisher`** trait: `offer(&[u8])`, `try_claim()` methods
 - **`AeronSubscriber`** trait: `poll()` for non-blocking message reception
 - **`TransportError`** unified error type with back-pressure variant
 - **Zero-copy buffers**: `ClaimBuffer` and `FragmentBuffer` with lifetime guarantees
 - **Encapsulation**: No `inner()` methods exposing underlying implementations
 
-### Dual Backend Support
+### Backend
 
-Both rusteron and aeron-rs compile simultaneously for side-by-side comparison:
+Rusteron is the sole transport backend. A pure-Rust [aeron-rs](https://github.com/UnitedTraders/aeron-rs) backend was prototyped behind a feature flag but removed because the integration and benchmark tests could not be made to pass against it reliably.
 
 | Feature Flag | Purpose |
 | :--- | :--- |
 | `embedded-driver` | Rusteron media driver (for CI/testing) |
-| `external-driver` | aeron-rs with external media driver |
+| `external-driver` | Use an externally-launched media driver |
 | `dhat-heap` | Allocation tracking for benchmarks |
 
-Rusteron-client is a regular dependency (not feature-gated). The `offer_mut(&mut [u8])` method enables zero-copy publishing on aeron-rs while delegating to `offer` on rusteron.
+Rusteron-client is a regular dependency (not feature-gated).
 
 ### Peek-Based Node Composition
 
@@ -98,10 +97,6 @@ No `dyn Trait` in hot paths. Static dispatch via generics ensures zero-cost abst
 
 Little-endian i64 binary parsing with zero-copy from Rusteron fragment buffers. Stateful nodes (e.g., `SummingNode`) maintain running aggregates across cycles.
 
-### ADR: Feature Flags Over Runtime Selection
-
-Backend selection is compile-time via feature flags, not runtime. This eliminates branching overhead in the hot path and enables dead code elimination.
-
 ## Key Constraints
 
 - Input and output code paths must be non-blocking and low latency
@@ -115,12 +110,12 @@ Backend selection is compile-time via feature flags, not runtime. This eliminate
 
 ### Aeron Media Driver
 
-- Required for both rusteron and aeron-rs transport backends
+- Required for the rusteron transport backend
 - Build: `git clone https://github.com/real-logic/aeron && cd aeron && ./cppbuild/cppbuild --build-aeron-driver --no-tests`
 - Must be running before starting applications using Aeron transports
 - See [Development Guide - Aerofoil](../aerofoil/docs/development-guide.md) for installation
 
-### C++ Toolchain (Rusteron Only)
+### C++ Toolchain
 
-- Required to compile rusteron crate and its C++ Aeron bindings
+- Required to compile the rusteron crate and its C++ Aeron bindings
 - Components: C++17 compatible compiler, CMake, standard build tools
