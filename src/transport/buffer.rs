@@ -9,6 +9,7 @@ use std::ops::{Deref, DerefMut};
 ///
 /// The lifetime `'a` ensures the buffer cannot outlive the underlying transport
 /// resource, preventing use-after-free errors.
+#[derive(Debug)]
 pub struct ClaimBuffer<'a> {
     buffer: &'a mut [u8],
     position: i64,
@@ -55,6 +56,7 @@ impl<'a> DerefMut for ClaimBuffer<'a> {
 /// This buffer provides read-only access to a message fragment received from
 /// the Aeron subscription. The data is accessed directly from the Aeron buffer
 /// without copying.
+#[derive(Debug)]
 pub struct FragmentBuffer<'a> {
     buffer: &'a [u8],
     header: FragmentHeader,

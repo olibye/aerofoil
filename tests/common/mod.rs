@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Common test utilities for integration tests.
 //!
 //! This module provides shared helpers used across integration tests,
@@ -54,7 +55,7 @@ impl MediaDriverGuard {
                  1. Download Aeron from https://github.com/real-logic/aeron/releases\n\
                  2. Extract and ensure libaeron_driver.dylib is in a library path\n\
                  3. Or set DYLD_LIBRARY_PATH to point to the lib directory\n\n\
-                 For detailed instructions, see openspec/integration-test.md",
+                 For detailed instructions, see docs/development-guide.md",
                 e
             )
         })?;

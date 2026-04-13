@@ -6,38 +6,20 @@ Wingfoil Aeron adapters for high-frequency trading.
 
 Aerofoil provides transport abstractions and adapters for integrating [Aeron](https://aeron.io/) messaging with [Wingfoil](https://crates.io/crates/wingfoil) stream processing.
 
-## Backend Selection
+## Backend
 
-Two Aeron backends are available:
-
-| Aspect | rusteron (default) | aeron-rs |
-|--------|-------------------|----------|
-| Implementation | C++ wrapper (FFI) | Pure Rust |
-| Maturity | More mature | Less mature |
-| C++ toolchain | Required | Not required |
-| Cross-compilation | Complex | Simpler |
-
-### Using rusteron (default)
-
-Requires C++ toolchain and Aeron C libraries:
+Aerofoil uses [rusteron](https://crates.io/crates/rusteron-client) — a Rust wrapper over the Aeron C++ client — as its sole transport backend. A C++ toolchain and the Aeron C libraries are required to build.
 
 ```toml
 [dependencies]
 aerofoil = "0.1"
 ```
 
-### Using aeron-rs (pure Rust)
+### Why not aeron-rs?
 
-No C++ toolchain required:
-
-```toml
-[dependencies]
-aerofoil = { version = "0.1", default-features = false, features = ["aeron-rs"] }
-```
+A pure-Rust [aeron-rs](https://crates.io/crates/aeron-rs) backend was prototyped behind a Cargo feature so users could avoid the C++ toolchain, but it was removed because the integration and benchmark tests could not be made to pass against it reliably. Only rusteron is supported today; if a working pure-Rust backend becomes viable it may be revisited.
 
 ## Usage
-
-Both backends implement the same traits:
 
 ```rust
 use aerofoil::transport::AeronPublisher;
@@ -45,55 +27,39 @@ use aerofoil::transport::AeronPublisher;
 fn publish<P: AeronPublisher>(publisher: &mut P, data: &[u8]) {
     publisher.offer(data).expect("publish failed");
 }
-
-// Use offer_mut to avoid copies on aeron-rs:
-fn publish_mut<P: AeronPublisher>(publisher: &mut P, data: &mut [u8]) {
-    publisher.offer_mut(data).expect("publish failed");
-}
 ```
 
 ## Running Examples
 
-Examples require the Aeron media driver. See `openspec/integration-test.md` for setup.
+Examples require the Aeron media driver. See `docs/development-guide.md` for setup.
 
 ```bash
-# With rusteron (default)
 cargo run --example subscriber_node_value_access
-
-# With aeron-rs
-cargo run --example subscriber_node_value_access --no-default-features --features aeron-rs
 ```
 
 ## Development
 
 ```bash
-# Build with rusteron (default)
 cargo build
-
-# Build with aeron-rs
-cargo build --no-default-features --features aeron-rs
-
-# Run tests
 cargo test --lib
 ```
 
 ## Documentation
 
 - `cargo doc --open` - API documentation
-- `openspec/project.md` - Project conventions
-- `openspec/integration-test.md` - Media driver setup
+- `docs/architecture.md` - Architecture and conventions
+- `docs/development-guide.md` - Testing and media driver setup
 
 ## Architecture
 
-```
+```text
 src/
 ├── transport/
 │   ├── mod.rs         # AeronPublisher, AeronSubscriber traits
-│   ├── rusteron/      # Rusteron adapter
-│   └── aeron_rs/      # aeron-rs adapter
+│   └── rusteron/      # Rusteron adapter
 └── nodes/             # Wingfoil node implementations
 ```
 
 ## License
 
-See LICENSE file.
+Licensed under the [MIT License](LICENSE).

@@ -13,6 +13,12 @@ pub struct RusteronPublisher {
     publication: AeronPublication,
 }
 
+impl std::fmt::Debug for RusteronPublisher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RusteronPublisher").finish_non_exhaustive()
+    }
+}
+
 impl RusteronPublisher {
     /// Creates a new `RusteronPublisher` wrapping the given Rusteron publication.
     pub fn new(publication: AeronPublication) -> Self {

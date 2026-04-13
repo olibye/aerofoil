@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Common benchmark utilities.
 //!
 //! Provides shared helpers for Aeron transport benchmarks, following the project
@@ -99,7 +100,7 @@ impl MediaDriverGuard {
         Ok(MediaDriverGuard { stop_signal })
     }
 
-    #[cfg(feature = "external-driver")]
+    #[cfg(all(feature = "external-driver", not(feature = "embedded-driver")))]
     pub fn start() -> Result<Self, String> {
         eprintln!("Using external Aeron media driver (external-driver feature enabled)");
         Ok(MediaDriverGuard {

@@ -16,6 +16,7 @@ pub mod rusteron;
 /// Represents the connection state of a publisher or subscriber,
 /// enabling status monitoring and lifecycle tracking.
 #[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
 pub enum AeronStatus {
     /// The endpoint is connected and actively communicating.
     Connected,
