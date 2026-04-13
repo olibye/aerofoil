@@ -213,10 +213,12 @@ where
     ///
     /// This method polls the Aeron subscriber (non-blocking) and processes any
     /// available messages, updating the current value when messages are successfully
-    /// parsed. Returns `false` to indicate the node should continue processing.
+    /// parsed. Returns `Ok(true)` when at least one fragment was processed (so active
+    /// downstream nodes are scheduled to re-cycle), `Ok(false)` otherwise. This matches
+    /// Wingfoil's `zmq_sub` convention of ticking on message arrival.
     fn cycle(&mut self, _state: &mut GraphState) -> anyhow::Result<bool> {
-        self.core.poll_and_process()?;
-        Ok(false)
+        let count = self.core.poll_and_process()?;
+        Ok(count > 0)
     }
 
     /// Register this node to be called on every cycle.
@@ -377,12 +379,12 @@ where
 {
     /// Called by Wingfoil on each graph cycle to poll for and process messages.
     ///
-    /// This method polls the Aeron subscriber (non-blocking) and processes any
-    /// available messages, updating the current value when messages are successfully
-    /// parsed. Returns `false` to indicate the node should continue processing.
+    /// Returns `Ok(true)` when at least one fragment was processed (so active downstream
+    /// nodes are scheduled to re-cycle), `Ok(false)` otherwise. This matches Wingfoil's
+    /// `zmq_sub` convention of ticking on message arrival.
     fn cycle(&mut self, _state: &mut GraphState) -> anyhow::Result<bool> {
-        self.core.poll_and_process()?;
-        Ok(false)
+        let count = self.core.poll_and_process()?;
+        Ok(count > 0)
     }
 
     /// Register this node to be called on every cycle.
@@ -730,5 +732,79 @@ mod tests {
         data_node.borrow_mut().core.subscriber.connected = false;
         data_node.borrow_mut().core.poll_and_process().unwrap();
         assert_eq!(*status.borrow().get(), AeronStatus::Disconnected);
+    }
+
+    // --- cycle() return value tests (Wingfoil tick-propagation contract) ---
+
+    fn make_test_graph_state() -> wingfoil::GraphState {
+        let runtime = std::sync::Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("tokio runtime"),
+        );
+        wingfoil::GraphState::new(
+            runtime,
+            wingfoil::RunMode::HistoricalFrom(wingfoil::NanoTime::ZERO),
+            wingfoil::RunFor::Cycles(1),
+            wingfoil::NanoTime::ZERO,
+        )
+    }
+
+    #[test]
+    fn given_messages_when_cycle_then_returns_ok_true() {
+        let msg = 42i64.to_le_bytes().to_vec();
+        let subscriber = MockSubscriber::new(vec![msg]);
+        let mut node = AeronSubscriberValueRefNode::new(subscriber, fallible_i64_parser, 0);
+        let mut state = make_test_graph_state();
+
+        let ticked = node.cycle(&mut state).unwrap();
+
+        assert!(
+            ticked,
+            "cycle() must return true when messages were processed"
+        );
+    }
+
+    #[test]
+    fn given_no_messages_when_cycle_then_returns_ok_false() {
+        let subscriber = MockSubscriber::new(vec![]);
+        let mut node = AeronSubscriberValueRefNode::new(subscriber, fallible_i64_parser, 0);
+        let mut state = make_test_graph_state();
+
+        let ticked = node.cycle(&mut state).unwrap();
+
+        assert!(
+            !ticked,
+            "cycle() must return false when no messages were processed"
+        );
+    }
+
+    #[test]
+    fn given_messages_when_value_node_cycle_then_returns_ok_true() {
+        let msg = 42i64.to_le_bytes().to_vec();
+        let subscriber = MockSubscriber::new(vec![msg]);
+        let mut node = AeronSubscriberValueNode::new(subscriber, fallible_i64_parser, 0);
+        let mut state = make_test_graph_state();
+
+        let ticked = node.cycle(&mut state).unwrap();
+
+        assert!(
+            ticked,
+            "cycle() must return true when messages were processed"
+        );
+    }
+
+    #[test]
+    fn given_no_messages_when_value_node_cycle_then_returns_ok_false() {
+        let subscriber = MockSubscriber::new(vec![]);
+        let mut node = AeronSubscriberValueNode::new(subscriber, fallible_i64_parser, 0);
+        let mut state = make_test_graph_state();
+
+        let ticked = node.cycle(&mut state).unwrap();
+
+        assert!(
+            !ticked,
+            "cycle() must return false when no messages were processed"
+        );
     }
 }
