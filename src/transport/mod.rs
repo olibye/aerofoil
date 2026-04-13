@@ -68,6 +68,18 @@ pub trait AeronPublisher {
     fn is_connected(&self) -> bool {
         false
     }
+
+    /// Returns whether this publication has been closed.
+    ///
+    /// A closed publication has had its lifecycle ended (gracefully or via shutdown).
+    /// This is distinct from being temporarily disconnected — closed is terminal.
+    ///
+    /// # Returns
+    ///
+    /// `true` if closed, `false` otherwise. Default implementation returns `false`.
+    fn is_closed(&self) -> bool {
+        false
+    }
 }
 
 /// Subscribes to and receives messages from an Aeron channel.
@@ -96,6 +108,18 @@ pub trait AeronSubscriber {
     ///
     /// `true` if connected, `false` otherwise. Default implementation returns `false`.
     fn is_connected(&self) -> bool {
+        false
+    }
+
+    /// Returns whether this subscription has been closed.
+    ///
+    /// A closed subscription has had its lifecycle ended (gracefully or via shutdown).
+    /// This is distinct from being temporarily disconnected — closed is terminal.
+    ///
+    /// # Returns
+    ///
+    /// `true` if closed, `false` otherwise. Default implementation returns `false`.
+    fn is_closed(&self) -> bool {
         false
     }
 }

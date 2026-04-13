@@ -25,7 +25,7 @@ where
     parser: F,
     current_value: T,
     status: Option<Rc<RefCell<MutableSource<AeronStatus>>>>,
-    last_connected: bool,
+    last_status: AeronStatus,
 }
 
 impl<T, F, S> AeronSubscriberCore<T, F, S>
@@ -40,7 +40,7 @@ where
             parser,
             current_value: initial_value,
             status: None,
-            last_connected: false,
+            last_status: AeronStatus::Disconnected,
         }
     }
 
@@ -55,7 +55,7 @@ where
             parser,
             current_value: initial_value,
             status: Some(status),
-            last_connected: false,
+            last_status: AeronStatus::Disconnected,
         }
     }
 
@@ -72,14 +72,19 @@ where
         });
 
         if let Some(status) = &self.status {
-            let connected = self.subscriber.is_connected();
-            if connected != self.last_connected {
-                status.borrow_mut().set(if connected {
-                    AeronStatus::Connected
-                } else {
-                    AeronStatus::Disconnected
-                });
-                self.last_connected = connected;
+            // Compute the desired status. `Closed` is terminal — it takes precedence
+            // over `Connected`/`Disconnected` because a closed subscription cannot
+            // come back. We emit on any transition from the previous status.
+            let new_status = if self.subscriber.is_closed() {
+                AeronStatus::Closed
+            } else if self.subscriber.is_connected() {
+                AeronStatus::Connected
+            } else {
+                AeronStatus::Disconnected
+            };
+            if new_status != self.last_status {
+                status.borrow_mut().set(new_status.clone());
+                self.last_status = new_status;
             }
         }
 
@@ -498,6 +503,7 @@ mod tests {
     struct ConnectedMockSubscriber {
         messages: Vec<Vec<u8>>,
         connected: bool,
+        closed: bool,
     }
 
     impl ConnectedMockSubscriber {
@@ -505,6 +511,7 @@ mod tests {
             Self {
                 messages,
                 connected,
+                closed: false,
             }
         }
     }
@@ -525,6 +532,10 @@ mod tests {
                 handler(&fragment)?;
             }
             Ok(count)
+        }
+
+        fn is_closed(&self) -> bool {
+            self.closed
         }
 
         fn is_connected(&self) -> bool {
@@ -806,5 +817,29 @@ mod tests {
             !ticked,
             "cycle() must return false when no messages were processed"
         );
+    }
+
+    #[test]
+    fn given_closed_subscriber_when_polled_then_status_transitions_to_closed() {
+        let mut subscriber = ConnectedMockSubscriber::new(vec![], true);
+        subscriber.closed = true;
+        let (data_node, status) = aeron_sub(subscriber, fallible_i64_parser, 0i64);
+
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+
+        assert_eq!(*status.borrow().get(), AeronStatus::Closed);
+    }
+
+    #[test]
+    fn given_connected_then_closed_when_cycled_then_status_transitions_through() {
+        let subscriber = ConnectedMockSubscriber::new(vec![], true);
+        let (data_node, status) = aeron_sub(subscriber, fallible_i64_parser, 0i64);
+
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+        assert_eq!(*status.borrow().get(), AeronStatus::Connected);
+
+        data_node.borrow_mut().core.subscriber.closed = true;
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+        assert_eq!(*status.borrow().get(), AeronStatus::Closed);
     }
 }

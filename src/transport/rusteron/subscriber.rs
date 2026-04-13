@@ -30,6 +30,10 @@ impl AeronSubscriber for RusteronSubscriber {
         self.subscription.is_connected()
     }
 
+    fn is_closed(&self) -> bool {
+        self.subscription.is_closed()
+    }
+
     fn poll<F>(&mut self, mut handler: F) -> Result<usize, TransportError>
     where
         F: FnMut(&FragmentBuffer) -> Result<(), TransportError>,
