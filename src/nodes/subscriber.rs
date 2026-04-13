@@ -60,7 +60,11 @@ where
     }
 
     fn poll_and_process(&mut self) -> Result<usize, TransportError> {
-        let poll_result = self.subscriber.poll(|fragment| {
+        // Early-return on poll error: if we couldn't successfully observe the
+        // transport this cycle, don't mutate the status stream — the next cycle
+        // will re-poll and re-evaluate. Mixing a status transition with a poll
+        // error in the same cycle creates a confusing race for downstream consumers.
+        let count = self.subscriber.poll(|fragment| {
             match (self.parser)(fragment) {
                 Ok(Some(parsed_value)) => {
                     self.current_value = parsed_value;
@@ -69,7 +73,7 @@ where
                 Err(e) => return Err(e),
             }
             Ok(())
-        });
+        })?;
 
         if let Some(status) = &self.status {
             // Compute the desired status. `Closed` is terminal — it takes precedence
@@ -88,7 +92,7 @@ where
             }
         }
 
-        poll_result
+        Ok(count)
     }
 
     fn current_value(&self) -> &T {
@@ -841,5 +845,32 @@ mod tests {
         data_node.borrow_mut().core.subscriber.closed = true;
         data_node.borrow_mut().core.poll_and_process().unwrap();
         assert_eq!(*status.borrow().get(), AeronStatus::Closed);
+    }
+
+    #[test]
+    fn given_poll_error_when_cycled_then_status_not_mutated() {
+        // Subscriber is connected — without the early-return, status would
+        // transition from Disconnected (initial) to Connected even though
+        // the poll fails. We assert the status remains at its initial value.
+        let msg = 42i64.to_le_bytes().to_vec();
+        let subscriber = ConnectedMockSubscriber::new(vec![msg], true);
+        let error_parser = |_: &[u8]| -> Result<Option<i64>, TransportError> {
+            Err(TransportError::Invalid("parse failed".to_string()))
+        };
+        let (data_node, status) = aeron_sub(subscriber, error_parser, 0i64);
+
+        // Sanity: initial status is Disconnected
+        assert_eq!(*status.borrow().get(), AeronStatus::Disconnected);
+
+        let result = data_node.borrow_mut().core.poll_and_process();
+        assert!(result.is_err(), "poll should error due to parser failure");
+
+        // Status MUST remain Disconnected — the status check was skipped because
+        // the cycle could not successfully observe the transport.
+        assert_eq!(
+            *status.borrow().get(),
+            AeronStatus::Disconnected,
+            "status should not transition when poll errors"
+        );
     }
 }
