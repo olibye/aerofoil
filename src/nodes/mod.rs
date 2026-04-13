@@ -120,7 +120,7 @@ mod source;
 mod subscriber;
 
 pub use builder::AeronSubscriberNodeBuilder;
-pub use publisher::{AeronPub, AeronPublisherNode};
+pub use publisher::{AeronPub, AeronPublisherNode, DualStreamPublisher};
 pub use source::MutableSource;
 pub use subscriber::{
     aeron_sub, AeronSubscriberValueNode, AeronSubscriberValueRefNode, DualStream,

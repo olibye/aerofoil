@@ -1,8 +1,8 @@
 //! Aeron publisher node and extension trait for Wingfoil stream composition.
 
-use crate::transport::{AeronPublisher, TransportError};
+use crate::nodes::MutableSource;
+use crate::transport::{AeronPublisher, AeronStatus, TransportError};
 use std::cell::RefCell;
-use std::marker::PhantomData;
 use std::rc::Rc;
 use wingfoil::{Element, GraphState, MutableNode, StreamPeekRef, UpStreams};
 
@@ -10,8 +10,14 @@ use wingfoil::{Element, GraphState, MutableNode, StreamPeekRef, UpStreams};
 ///
 /// Each `cycle()`:
 /// 1. Peeks the upstream `StreamPeekRef<T>` for the current value
-/// 2. If changed from the last published value, serializes and calls `offer()`
-/// 3. On `BackPressure`, skips silently (retry next cycle)
+/// 2. If this is the first cycle, OR the value differs from the last value successfully
+///    published, serializes and calls `offer()`. The first comparison uses `Option::None`
+///    as the prior state so the very first upstream value is always offered, even if it
+///    happens to equal `T::default()`.
+/// 3. On `BackPressure`, the latest value is **not** marked as published — the next cycle
+///    will retry. However, if the upstream has advanced to a newer value by then, the
+///    back-pressured value is dropped (latest-wins semantics — the publisher does not
+///    queue values).
 pub struct AeronPublisherNode<T, P, Ser, U>
 where
     T: Element,
@@ -22,8 +28,9 @@ where
     upstream: Rc<RefCell<U>>,
     publisher: P,
     serializer: Ser,
-    last_value: T,
-    _marker: PhantomData<T>,
+    last_published: Option<T>,
+    status: Option<Rc<RefCell<MutableSource<AeronStatus>>>>,
+    last_status: AeronStatus,
 }
 
 impl<T, P, Ser, U> std::fmt::Debug for AeronPublisherNode<T, P, Ser, U>
@@ -45,32 +52,91 @@ where
     Ser: FnMut(&T) -> Vec<u8>,
     U: StreamPeekRef<T>,
 {
-    /// Creates a new publisher node.
+    /// Creates a new publisher node without a status stream.
     pub fn new(upstream: Rc<RefCell<U>>, publisher: P, serializer: Ser) -> Self {
         Self {
             upstream,
             publisher,
             serializer,
-            last_value: T::default(),
-            _marker: PhantomData,
+            last_published: None,
+            status: None,
+            last_status: AeronStatus::Disconnected,
+        }
+    }
+
+    /// Creates a new publisher node that reports lifecycle transitions on the given status stream.
+    pub fn with_status(
+        upstream: Rc<RefCell<U>>,
+        publisher: P,
+        serializer: Ser,
+        status: Rc<RefCell<MutableSource<AeronStatus>>>,
+    ) -> Self {
+        Self {
+            upstream,
+            publisher,
+            serializer,
+            last_published: None,
+            status: Some(status),
+            last_status: AeronStatus::Disconnected,
+        }
+    }
+
+    fn update_status(&mut self, new_status: AeronStatus) {
+        if let Some(status) = &self.status {
+            if new_status != self.last_status {
+                status.borrow_mut().set(new_status.clone());
+                self.last_status = new_status;
+            }
         }
     }
 
     fn poll_and_publish(&mut self) -> anyhow::Result<()> {
+        // Closed is terminal — surface it before attempting to publish
+        if self.publisher.is_closed() {
+            self.update_status(AeronStatus::Closed);
+            return Ok(());
+        }
+
         let upstream = self.upstream.borrow();
         let current = upstream.peek_ref();
-        if *current != self.last_value {
+        // Publish if this is the first cycle (last_published == None) or the value changed.
+        // Using Option<T> for last_published avoids the bug where T::default() == upstream's
+        // first real value silently drops the first message.
+        let should_publish = match &self.last_published {
+            None => true,
+            Some(prev) => current != prev,
+        };
+        let mut offer_outcome: Option<AeronStatus> = None;
+        if should_publish {
             let bytes = (self.serializer)(current);
             let cloned = current.clone();
             drop(upstream);
             match self.publisher.offer(&bytes) {
                 Ok(_) => {
-                    self.last_value = cloned;
+                    self.last_published = Some(cloned);
+                    offer_outcome = Some(AeronStatus::Connected);
                 }
-                Err(TransportError::BackPressure) => {} // skip, retry next cycle
+                Err(TransportError::BackPressure) => {
+                    offer_outcome = Some(AeronStatus::BackPressured);
+                }
                 Err(e) => return Err(e.into()),
             }
+        } else {
+            drop(upstream);
         }
+
+        // If we didn't attempt an offer this cycle, fall back to the publisher's
+        // connection state so consumers see Disconnected/Connected transitions
+        // even when upstream hasn't ticked.
+        let new_status = offer_outcome.unwrap_or_else(|| {
+            if self.publisher.is_connected() {
+                AeronStatus::Connected
+            } else {
+                AeronStatus::Disconnected
+            }
+        });
+        self.update_status(new_status);
+
         Ok(())
     }
 }
@@ -98,6 +164,12 @@ where
     }
 }
 
+/// Return type for [`AeronPub::aeron_pub_with_status`]: `(publisher_node, status_source)`.
+pub type DualStreamPublisher<T, P, Ser, U> = (
+    Rc<RefCell<AeronPublisherNode<T, P, Ser, U>>>,
+    Rc<RefCell<MutableSource<AeronStatus>>>,
+);
+
 /// Extension trait for creating Aeron publisher nodes from upstream streams.
 ///
 /// Implemented on `Rc<RefCell<U>>` where `U: StreamPeekRef<T>`, mirroring
@@ -105,6 +177,18 @@ where
 pub trait AeronPub<T: Element, U: StreamPeekRef<T>> {
     /// Creates an `AeronPublisherNode` that publishes upstream values via Aeron.
     fn aeron_pub<P, Ser>(&self, publisher: P, serializer: Ser) -> AeronPublisherNode<T, P, Ser, U>
+    where
+        P: AeronPublisher,
+        Ser: FnMut(&T) -> Vec<u8>;
+
+    /// Creates a publisher node and a paired status source. The status source emits
+    /// `AeronStatus` transitions (Connected, Disconnected, BackPressured, Closed)
+    /// derived from `offer()` results and `is_connected()` / `is_closed()` polling.
+    fn aeron_pub_with_status<P, Ser>(
+        &self,
+        publisher: P,
+        serializer: Ser,
+    ) -> DualStreamPublisher<T, P, Ser, U>
     where
         P: AeronPublisher,
         Ser: FnMut(&T) -> Vec<u8>;
@@ -122,6 +206,25 @@ where
     {
         AeronPublisherNode::new(Rc::clone(self), publisher, serializer)
     }
+
+    fn aeron_pub_with_status<P, Ser>(
+        &self,
+        publisher: P,
+        serializer: Ser,
+    ) -> DualStreamPublisher<T, P, Ser, U>
+    where
+        P: AeronPublisher,
+        Ser: FnMut(&T) -> Vec<u8>,
+    {
+        let status = Rc::new(RefCell::new(MutableSource::new(AeronStatus::Disconnected)));
+        let node = AeronPublisherNode::with_status(
+            Rc::clone(self),
+            publisher,
+            serializer,
+            Rc::clone(&status),
+        );
+        (Rc::new(RefCell::new(node)), status)
+    }
 }
 
 #[cfg(test)]
@@ -132,6 +235,8 @@ mod tests {
     struct MockPublisher {
         offered: RefCell<Vec<Vec<u8>>>,
         back_pressure: bool,
+        connected: bool,
+        closed: bool,
     }
 
     impl MockPublisher {
@@ -139,6 +244,8 @@ mod tests {
             Self {
                 offered: RefCell::new(Vec::new()),
                 back_pressure: false,
+                connected: true,
+                closed: false,
             }
         }
 
@@ -146,6 +253,17 @@ mod tests {
             Self {
                 offered: RefCell::new(Vec::new()),
                 back_pressure: true,
+                connected: true,
+                closed: false,
+            }
+        }
+
+        fn closed() -> Self {
+            Self {
+                offered: RefCell::new(Vec::new()),
+                back_pressure: false,
+                connected: false,
+                closed: true,
             }
         }
     }
@@ -161,6 +279,14 @@ mod tests {
 
         fn try_claim(&mut self, _length: usize) -> Result<ClaimBuffer<'_>, TransportError> {
             Err(TransportError::Invalid("mock".to_string()))
+        }
+
+        fn is_connected(&self) -> bool {
+            self.connected
+        }
+
+        fn is_closed(&self) -> bool {
+            self.closed
         }
     }
 
@@ -255,5 +381,196 @@ mod tests {
         let offered = node.publisher.offered.borrow();
         assert_eq!(offered.len(), 1);
         assert_eq!(offered[0], 77i64.to_le_bytes().to_vec());
+    }
+
+    // --- Dual-stream publisher status tests ---
+
+    #[test]
+    fn given_successful_offer_when_publish_then_status_transitions_to_connected() {
+        let source = Rc::new(RefCell::new(MockSource { value: 42 }));
+        let publisher = MockPublisher::new();
+        let serializer = |v: &i64| v.to_le_bytes().to_vec();
+
+        let (node, status) = source.aeron_pub_with_status(publisher, serializer);
+        node.borrow_mut().poll_and_publish().unwrap();
+
+        assert_eq!(*status.borrow().get(), AeronStatus::Connected);
+    }
+
+    #[test]
+    fn given_back_pressure_when_publish_then_status_transitions_to_back_pressured() {
+        let source = Rc::new(RefCell::new(MockSource { value: 42 }));
+        let publisher = MockPublisher::with_back_pressure();
+        let serializer = |v: &i64| v.to_le_bytes().to_vec();
+
+        let (node, status) = source.aeron_pub_with_status(publisher, serializer);
+        node.borrow_mut().poll_and_publish().unwrap();
+
+        assert_eq!(*status.borrow().get(), AeronStatus::BackPressured);
+    }
+
+    #[test]
+    fn given_closed_publisher_when_publish_then_status_transitions_to_closed() {
+        let source = Rc::new(RefCell::new(MockSource { value: 42 }));
+        let publisher = MockPublisher::closed();
+        let serializer = |v: &i64| v.to_le_bytes().to_vec();
+
+        let (node, status) = source.aeron_pub_with_status(publisher, serializer);
+        node.borrow_mut().poll_and_publish().unwrap();
+
+        assert_eq!(*status.borrow().get(), AeronStatus::Closed);
+    }
+
+    #[test]
+    fn given_status_unchanged_when_cycle_then_no_status_re_emit() {
+        let source = Rc::new(RefCell::new(MockSource { value: 42 }));
+        let publisher = MockPublisher::new();
+        let serializer = |v: &i64| v.to_le_bytes().to_vec();
+
+        let (node, status) = source.aeron_pub_with_status(publisher, serializer);
+        node.borrow_mut().poll_and_publish().unwrap();
+        assert_eq!(*status.borrow().get(), AeronStatus::Connected);
+
+        // second cycle, same value, same publisher state — should remain Connected
+        node.borrow_mut().poll_and_publish().unwrap();
+        assert_eq!(*status.borrow().get(), AeronStatus::Connected);
+    }
+
+    #[test]
+    fn given_no_status_stream_when_publish_then_works_silently() {
+        let source = Rc::new(RefCell::new(MockSource { value: 42 }));
+        let publisher = MockPublisher::with_back_pressure();
+        let serializer = |v: &i64| v.to_le_bytes().to_vec();
+
+        // Plain aeron_pub (no status stream) — should still complete cleanly on back-pressure
+        let mut node = source.aeron_pub(publisher, serializer);
+        node.poll_and_publish().unwrap();
+    }
+
+    // --- P1/P4: First-message-equals-default tests ---
+
+    #[test]
+    fn given_upstream_value_equals_t_default_when_cycle_then_first_message_published() {
+        // Regression test for the bug where last_value: T initialized to T::default()
+        // silently dropped the first message if the upstream's initial value happened
+        // to equal T::default() (e.g., 0i64).
+        let source = Rc::new(RefCell::new(MockSource { value: 0 })); // == i64::default()
+        let publisher = MockPublisher::new();
+        let serializer = |v: &i64| v.to_le_bytes().to_vec();
+
+        let mut node = AeronPublisherNode::new(Rc::clone(&source), publisher, serializer);
+        node.poll_and_publish().unwrap();
+
+        let offered = node.publisher.offered.borrow();
+        assert_eq!(
+            offered.len(),
+            1,
+            "first message must publish even when value == T::default()"
+        );
+        assert_eq!(offered[0], 0i64.to_le_bytes().to_vec());
+    }
+
+    #[test]
+    fn given_upstream_starts_at_default_then_changes_when_cycled_then_both_published() {
+        let source = Rc::new(RefCell::new(MockSource { value: 0 }));
+        let publisher = MockPublisher::new();
+        let serializer = |v: &i64| v.to_le_bytes().to_vec();
+
+        let mut node = AeronPublisherNode::new(Rc::clone(&source), publisher, serializer);
+        node.poll_and_publish().unwrap();
+        source.borrow_mut().value = 42;
+        node.poll_and_publish().unwrap();
+
+        let offered = node.publisher.offered.borrow();
+        assert_eq!(offered.len(), 2);
+        assert_eq!(offered[0], 0i64.to_le_bytes().to_vec());
+        assert_eq!(offered[1], 42i64.to_le_bytes().to_vec());
+    }
+
+    // --- P6: BackPressure retry behaviour ---
+
+    /// Mock publisher that back-pressures the first N offers, then succeeds.
+    struct FlakeyPublisher {
+        offered: RefCell<Vec<Vec<u8>>>,
+        back_pressure_count: RefCell<usize>,
+    }
+
+    impl FlakeyPublisher {
+        fn new(back_pressure_count: usize) -> Self {
+            Self {
+                offered: RefCell::new(Vec::new()),
+                back_pressure_count: RefCell::new(back_pressure_count),
+            }
+        }
+    }
+
+    impl AeronPublisher for FlakeyPublisher {
+        fn offer(&mut self, buffer: &[u8]) -> Result<i64, TransportError> {
+            let mut remaining = self.back_pressure_count.borrow_mut();
+            if *remaining > 0 {
+                *remaining -= 1;
+                return Err(TransportError::BackPressure);
+            }
+            self.offered.borrow_mut().push(buffer.to_vec());
+            Ok(0)
+        }
+
+        fn try_claim(&mut self, _length: usize) -> Result<ClaimBuffer<'_>, TransportError> {
+            Err(TransportError::Invalid("mock".to_string()))
+        }
+
+        fn is_connected(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn given_back_pressure_then_clear_when_cycled_then_value_eventually_publishes() {
+        // Verifies last_published is NOT updated on BackPressure, so the next cycle
+        // re-attempts the same value (rather than treating it as already sent).
+        let source = Rc::new(RefCell::new(MockSource { value: 42 }));
+        let publisher = FlakeyPublisher::new(2); // back-pressure first 2 offers
+        let serializer = |v: &i64| v.to_le_bytes().to_vec();
+
+        let mut node = AeronPublisherNode::new(Rc::clone(&source), publisher, serializer);
+
+        // Cycle 1 + 2: back-pressured, no publish yet
+        node.poll_and_publish().unwrap();
+        node.poll_and_publish().unwrap();
+        assert_eq!(node.publisher.offered.borrow().len(), 0);
+
+        // Cycle 3: publisher accepts — same value finally goes through
+        node.poll_and_publish().unwrap();
+        let offered = node.publisher.offered.borrow();
+        assert_eq!(offered.len(), 1);
+        assert_eq!(offered[0], 42i64.to_le_bytes().to_vec());
+    }
+
+    #[test]
+    fn given_back_pressure_when_upstream_advances_then_newer_value_published_not_old() {
+        // Documents the latest-wins semantic: if a value back-pressures and upstream
+        // advances before the next cycle, the older value is dropped (not queued).
+        let source = Rc::new(RefCell::new(MockSource { value: 42 }));
+        let publisher = FlakeyPublisher::new(1); // back-pressure first offer only
+        let serializer = |v: &i64| v.to_le_bytes().to_vec();
+
+        let mut node = AeronPublisherNode::new(Rc::clone(&source), publisher, serializer);
+
+        // Cycle 1: 42 back-pressured
+        node.poll_and_publish().unwrap();
+        assert_eq!(node.publisher.offered.borrow().len(), 0);
+
+        // Upstream advances to 100 before cycle 2
+        source.borrow_mut().value = 100;
+
+        // Cycle 2: 100 publishes (42 is dropped — latest-wins)
+        node.poll_and_publish().unwrap();
+        let offered = node.publisher.offered.borrow();
+        assert_eq!(offered.len(), 1);
+        assert_eq!(
+            offered[0],
+            100i64.to_le_bytes().to_vec(),
+            "latest-wins: back-pressured 42 was dropped, 100 published"
+        );
     }
 }

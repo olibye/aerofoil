@@ -25,7 +25,7 @@ where
     parser: F,
     current_value: T,
     status: Option<Rc<RefCell<MutableSource<AeronStatus>>>>,
-    last_connected: bool,
+    last_status: AeronStatus,
 }
 
 impl<T, F, S> AeronSubscriberCore<T, F, S>
@@ -40,7 +40,7 @@ where
             parser,
             current_value: initial_value,
             status: None,
-            last_connected: false,
+            last_status: AeronStatus::Disconnected,
         }
     }
 
@@ -55,12 +55,16 @@ where
             parser,
             current_value: initial_value,
             status: Some(status),
-            last_connected: false,
+            last_status: AeronStatus::Disconnected,
         }
     }
 
     fn poll_and_process(&mut self) -> Result<usize, TransportError> {
-        let poll_result = self.subscriber.poll(|fragment| {
+        // Early-return on poll error: if we couldn't successfully observe the
+        // transport this cycle, don't mutate the status stream — the next cycle
+        // will re-poll and re-evaluate. Mixing a status transition with a poll
+        // error in the same cycle creates a confusing race for downstream consumers.
+        let count = self.subscriber.poll(|fragment| {
             match (self.parser)(fragment) {
                 Ok(Some(parsed_value)) => {
                     self.current_value = parsed_value;
@@ -69,21 +73,26 @@ where
                 Err(e) => return Err(e),
             }
             Ok(())
-        });
+        })?;
 
         if let Some(status) = &self.status {
-            let connected = self.subscriber.is_connected();
-            if connected != self.last_connected {
-                status.borrow_mut().set(if connected {
-                    AeronStatus::Connected
-                } else {
-                    AeronStatus::Disconnected
-                });
-                self.last_connected = connected;
+            // Compute the desired status. `Closed` is terminal — it takes precedence
+            // over `Connected`/`Disconnected` because a closed subscription cannot
+            // come back. We emit on any transition from the previous status.
+            let new_status = if self.subscriber.is_closed() {
+                AeronStatus::Closed
+            } else if self.subscriber.is_connected() {
+                AeronStatus::Connected
+            } else {
+                AeronStatus::Disconnected
+            };
+            if new_status != self.last_status {
+                status.borrow_mut().set(new_status.clone());
+                self.last_status = new_status;
             }
         }
 
-        poll_result
+        Ok(count)
     }
 
     fn current_value(&self) -> &T {
@@ -213,10 +222,12 @@ where
     ///
     /// This method polls the Aeron subscriber (non-blocking) and processes any
     /// available messages, updating the current value when messages are successfully
-    /// parsed. Returns `false` to indicate the node should continue processing.
+    /// parsed. Returns `Ok(true)` when at least one fragment was processed (so active
+    /// downstream nodes are scheduled to re-cycle), `Ok(false)` otherwise. This matches
+    /// Wingfoil's `zmq_sub` convention of ticking on message arrival.
     fn cycle(&mut self, _state: &mut GraphState) -> anyhow::Result<bool> {
-        self.core.poll_and_process()?;
-        Ok(false)
+        let count = self.core.poll_and_process()?;
+        Ok(count > 0)
     }
 
     /// Register this node to be called on every cycle.
@@ -377,12 +388,12 @@ where
 {
     /// Called by Wingfoil on each graph cycle to poll for and process messages.
     ///
-    /// This method polls the Aeron subscriber (non-blocking) and processes any
-    /// available messages, updating the current value when messages are successfully
-    /// parsed. Returns `false` to indicate the node should continue processing.
+    /// Returns `Ok(true)` when at least one fragment was processed (so active downstream
+    /// nodes are scheduled to re-cycle), `Ok(false)` otherwise. This matches Wingfoil's
+    /// `zmq_sub` convention of ticking on message arrival.
     fn cycle(&mut self, _state: &mut GraphState) -> anyhow::Result<bool> {
-        self.core.poll_and_process()?;
-        Ok(false)
+        let count = self.core.poll_and_process()?;
+        Ok(count > 0)
     }
 
     /// Register this node to be called on every cycle.
@@ -496,6 +507,7 @@ mod tests {
     struct ConnectedMockSubscriber {
         messages: Vec<Vec<u8>>,
         connected: bool,
+        closed: bool,
     }
 
     impl ConnectedMockSubscriber {
@@ -503,6 +515,7 @@ mod tests {
             Self {
                 messages,
                 connected,
+                closed: false,
             }
         }
     }
@@ -523,6 +536,10 @@ mod tests {
                 handler(&fragment)?;
             }
             Ok(count)
+        }
+
+        fn is_closed(&self) -> bool {
+            self.closed
         }
 
         fn is_connected(&self) -> bool {
@@ -730,5 +747,130 @@ mod tests {
         data_node.borrow_mut().core.subscriber.connected = false;
         data_node.borrow_mut().core.poll_and_process().unwrap();
         assert_eq!(*status.borrow().get(), AeronStatus::Disconnected);
+    }
+
+    // --- cycle() return value tests (Wingfoil tick-propagation contract) ---
+
+    fn make_test_graph_state() -> wingfoil::GraphState {
+        let runtime = std::sync::Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("tokio runtime"),
+        );
+        wingfoil::GraphState::new(
+            runtime,
+            wingfoil::RunMode::HistoricalFrom(wingfoil::NanoTime::ZERO),
+            wingfoil::RunFor::Cycles(1),
+            wingfoil::NanoTime::ZERO,
+        )
+    }
+
+    #[test]
+    fn given_messages_when_cycle_then_returns_ok_true() {
+        let msg = 42i64.to_le_bytes().to_vec();
+        let subscriber = MockSubscriber::new(vec![msg]);
+        let mut node = AeronSubscriberValueRefNode::new(subscriber, fallible_i64_parser, 0);
+        let mut state = make_test_graph_state();
+
+        let ticked = node.cycle(&mut state).unwrap();
+
+        assert!(
+            ticked,
+            "cycle() must return true when messages were processed"
+        );
+    }
+
+    #[test]
+    fn given_no_messages_when_cycle_then_returns_ok_false() {
+        let subscriber = MockSubscriber::new(vec![]);
+        let mut node = AeronSubscriberValueRefNode::new(subscriber, fallible_i64_parser, 0);
+        let mut state = make_test_graph_state();
+
+        let ticked = node.cycle(&mut state).unwrap();
+
+        assert!(
+            !ticked,
+            "cycle() must return false when no messages were processed"
+        );
+    }
+
+    #[test]
+    fn given_messages_when_value_node_cycle_then_returns_ok_true() {
+        let msg = 42i64.to_le_bytes().to_vec();
+        let subscriber = MockSubscriber::new(vec![msg]);
+        let mut node = AeronSubscriberValueNode::new(subscriber, fallible_i64_parser, 0);
+        let mut state = make_test_graph_state();
+
+        let ticked = node.cycle(&mut state).unwrap();
+
+        assert!(
+            ticked,
+            "cycle() must return true when messages were processed"
+        );
+    }
+
+    #[test]
+    fn given_no_messages_when_value_node_cycle_then_returns_ok_false() {
+        let subscriber = MockSubscriber::new(vec![]);
+        let mut node = AeronSubscriberValueNode::new(subscriber, fallible_i64_parser, 0);
+        let mut state = make_test_graph_state();
+
+        let ticked = node.cycle(&mut state).unwrap();
+
+        assert!(
+            !ticked,
+            "cycle() must return false when no messages were processed"
+        );
+    }
+
+    #[test]
+    fn given_closed_subscriber_when_polled_then_status_transitions_to_closed() {
+        let mut subscriber = ConnectedMockSubscriber::new(vec![], true);
+        subscriber.closed = true;
+        let (data_node, status) = aeron_sub(subscriber, fallible_i64_parser, 0i64);
+
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+
+        assert_eq!(*status.borrow().get(), AeronStatus::Closed);
+    }
+
+    #[test]
+    fn given_connected_then_closed_when_cycled_then_status_transitions_through() {
+        let subscriber = ConnectedMockSubscriber::new(vec![], true);
+        let (data_node, status) = aeron_sub(subscriber, fallible_i64_parser, 0i64);
+
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+        assert_eq!(*status.borrow().get(), AeronStatus::Connected);
+
+        data_node.borrow_mut().core.subscriber.closed = true;
+        data_node.borrow_mut().core.poll_and_process().unwrap();
+        assert_eq!(*status.borrow().get(), AeronStatus::Closed);
+    }
+
+    #[test]
+    fn given_poll_error_when_cycled_then_status_not_mutated() {
+        // Subscriber is connected — without the early-return, status would
+        // transition from Disconnected (initial) to Connected even though
+        // the poll fails. We assert the status remains at its initial value.
+        let msg = 42i64.to_le_bytes().to_vec();
+        let subscriber = ConnectedMockSubscriber::new(vec![msg], true);
+        let error_parser = |_: &[u8]| -> Result<Option<i64>, TransportError> {
+            Err(TransportError::Invalid("parse failed".to_string()))
+        };
+        let (data_node, status) = aeron_sub(subscriber, error_parser, 0i64);
+
+        // Sanity: initial status is Disconnected
+        assert_eq!(*status.borrow().get(), AeronStatus::Disconnected);
+
+        let result = data_node.borrow_mut().core.poll_and_process();
+        assert!(result.is_err(), "poll should error due to parser failure");
+
+        // Status MUST remain Disconnected — the status check was skipped because
+        // the cycle could not successfully observe the transport.
+        assert_eq!(
+            *status.borrow().get(),
+            AeronStatus::Disconnected,
+            "status should not transition when poll errors"
+        );
     }
 }
