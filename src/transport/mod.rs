@@ -4,9 +4,16 @@
 //! enabling zero-cost polymorphism across Rusteron and mock implementations for testing.
 
 pub mod buffer;
+pub mod channel;
+pub mod discovery;
 pub mod error;
 
 pub use buffer::{ClaimBuffer, FragmentBuffer, FragmentHeader};
+pub use channel::ChannelUri;
+pub use discovery::{
+    aeron_pub_named, aeron_sub_discover, lookup_pub, lookup_sub, register_pub, register_sub,
+    DiscoveryError,
+};
 pub use error::TransportError;
 
 pub mod rusteron;
