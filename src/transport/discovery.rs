@@ -14,18 +14,21 @@ use std::sync::{Mutex, OnceLock};
 
 use super::{AeronPublisher, AeronSubscriber};
 
-/// Errors returned by named discovery lookups.
+/// Errors returned by named discovery operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiscoveryError {
     /// No publisher or subscriber has been registered under the given name.
     Unknown(String),
+    /// Registration rejected because the name is empty.
+    EmptyName,
 }
 
 impl fmt::Display for DiscoveryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DiscoveryError::Unknown(name) => write!(f, "unknown discovery name: {name}"),
+            DiscoveryError::EmptyName => write!(f, "discovery name must not be empty"),
         }
     }
 }
@@ -46,21 +49,37 @@ fn registry(reg: &'static Registry) -> &'static Mutex<HashMap<String, (String, i
 /// Re-registering an existing name **overwrites** the prior entry. This is
 /// deterministic and matches the typical "configuration applied last wins"
 /// expectation from application startup code.
-pub fn register_pub(name: &str, channel: String, stream_id: i32) {
+///
+/// # Errors
+///
+/// Returns [`DiscoveryError::EmptyName`] if `name` is empty.
+pub fn register_pub(name: &str, channel: String, stream_id: i32) -> Result<(), DiscoveryError> {
+    if name.is_empty() {
+        return Err(DiscoveryError::EmptyName);
+    }
     let mut map = registry(&PUB_REGISTRY)
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     map.insert(name.to_string(), (channel, stream_id));
+    Ok(())
 }
 
 /// Registers a subscriber endpoint under `name`.
 ///
 /// Re-registering an existing name **overwrites** the prior entry.
-pub fn register_sub(name: &str, channel: String, stream_id: i32) {
+///
+/// # Errors
+///
+/// Returns [`DiscoveryError::EmptyName`] if `name` is empty.
+pub fn register_sub(name: &str, channel: String, stream_id: i32) -> Result<(), DiscoveryError> {
+    if name.is_empty() {
+        return Err(DiscoveryError::EmptyName);
+    }
     let mut map = registry(&SUB_REGISTRY)
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     map.insert(name.to_string(), (channel, stream_id));
+    Ok(())
 }
 
 /// Returns the registered `(channel, stream_id)` for a publisher name, if any.
@@ -137,7 +156,7 @@ mod tests {
 
     #[test]
     fn given_registered_pub_when_aeron_pub_named_then_returns_publisher() {
-        register_pub("test_pub_round_trip", "aeron:ipc".to_string(), 42);
+        register_pub("test_pub_round_trip", "aeron:ipc".to_string(), 42).unwrap();
         let result = aeron_pub_named("test_pub_round_trip", MockPublisher);
         assert!(result.is_ok());
         assert_eq!(
@@ -163,7 +182,8 @@ mod tests {
             "test_sub_round_trip",
             "aeron:udp?endpoint=127.0.0.1:40000".to_string(),
             7,
-        );
+        )
+        .unwrap();
         let result = aeron_sub_discover("test_sub_round_trip", MockSubscriber);
         assert!(result.is_ok());
         assert_eq!(
@@ -185,12 +205,13 @@ mod tests {
 
     #[test]
     fn given_registered_pub_when_re_registered_then_overwrites() {
-        register_pub("test_pub_overwrite", "aeron:ipc".to_string(), 1);
+        register_pub("test_pub_overwrite", "aeron:ipc".to_string(), 1).unwrap();
         register_pub(
             "test_pub_overwrite",
             "aeron:udp?endpoint=127.0.0.1:1".to_string(),
             2,
-        );
+        )
+        .unwrap();
         assert_eq!(
             lookup_pub("test_pub_overwrite"),
             Some(("aeron:udp?endpoint=127.0.0.1:1".to_string(), 2))
@@ -199,12 +220,13 @@ mod tests {
 
     #[test]
     fn given_registered_sub_when_re_registered_then_overwrites() {
-        register_sub("test_sub_overwrite", "aeron:ipc".to_string(), 1);
+        register_sub("test_sub_overwrite", "aeron:ipc".to_string(), 1).unwrap();
         register_sub(
             "test_sub_overwrite",
             "aeron:udp?endpoint=127.0.0.1:2".to_string(),
             9,
-        );
+        )
+        .unwrap();
         assert_eq!(
             lookup_sub("test_sub_overwrite"),
             Some(("aeron:udp?endpoint=127.0.0.1:2".to_string(), 9))
@@ -212,8 +234,26 @@ mod tests {
     }
 
     #[test]
+    fn given_empty_name_when_register_pub_then_returns_empty_name_error() {
+        let err = register_pub("", "aeron:ipc".to_string(), 1).unwrap_err();
+        assert_eq!(err, DiscoveryError::EmptyName);
+    }
+
+    #[test]
+    fn given_empty_name_when_register_sub_then_returns_empty_name_error() {
+        let err = register_sub("", "aeron:ipc".to_string(), 1).unwrap_err();
+        assert_eq!(err, DiscoveryError::EmptyName);
+    }
+
+    #[test]
     fn given_discovery_error_when_display_then_includes_name() {
         let err = DiscoveryError::Unknown("foo".to_string());
         assert_eq!(format!("{err}"), "unknown discovery name: foo");
+    }
+
+    #[test]
+    fn given_empty_name_error_when_display_then_describes_issue() {
+        let err = DiscoveryError::EmptyName;
+        assert_eq!(format!("{err}"), "discovery name must not be empty");
     }
 }
