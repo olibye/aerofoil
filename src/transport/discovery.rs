@@ -44,6 +44,13 @@ fn registry(reg: &'static Registry) -> &'static Mutex<HashMap<String, (String, i
     reg.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn validate_name(name: &str) -> Result<(), DiscoveryError> {
+    if name.is_empty() || name.trim().is_empty() {
+        return Err(DiscoveryError::EmptyName);
+    }
+    Ok(())
+}
+
 /// Registers a publisher endpoint under `name`.
 ///
 /// Re-registering an existing name **overwrites** the prior entry. This is
@@ -52,11 +59,9 @@ fn registry(reg: &'static Registry) -> &'static Mutex<HashMap<String, (String, i
 ///
 /// # Errors
 ///
-/// Returns [`DiscoveryError::EmptyName`] if `name` is empty.
+/// Returns [`DiscoveryError::EmptyName`] if `name` is empty or whitespace-only.
 pub fn register_pub(name: &str, channel: String, stream_id: i32) -> Result<(), DiscoveryError> {
-    if name.is_empty() {
-        return Err(DiscoveryError::EmptyName);
-    }
+    validate_name(name)?;
     let mut map = registry(&PUB_REGISTRY)
         .lock()
         .unwrap_or_else(|p| p.into_inner());
@@ -70,11 +75,9 @@ pub fn register_pub(name: &str, channel: String, stream_id: i32) -> Result<(), D
 ///
 /// # Errors
 ///
-/// Returns [`DiscoveryError::EmptyName`] if `name` is empty.
+/// Returns [`DiscoveryError::EmptyName`] if `name` is empty or whitespace-only.
 pub fn register_sub(name: &str, channel: String, stream_id: i32) -> Result<(), DiscoveryError> {
-    if name.is_empty() {
-        return Err(DiscoveryError::EmptyName);
-    }
+    validate_name(name)?;
     let mut map = registry(&SUB_REGISTRY)
         .lock()
         .unwrap_or_else(|p| p.into_inner());
@@ -83,7 +86,13 @@ pub fn register_sub(name: &str, channel: String, stream_id: i32) -> Result<(), D
 }
 
 /// Returns the registered `(channel, stream_id)` for a publisher name, if any.
+///
+/// Returns `None` for empty or whitespace-only names (consistent with
+/// [`register_pub`] rejecting them).
 pub fn lookup_pub(name: &str) -> Option<(String, i32)> {
+    if validate_name(name).is_err() {
+        return None;
+    }
     let map = registry(&PUB_REGISTRY)
         .lock()
         .unwrap_or_else(|p| p.into_inner());
@@ -91,7 +100,13 @@ pub fn lookup_pub(name: &str) -> Option<(String, i32)> {
 }
 
 /// Returns the registered `(channel, stream_id)` for a subscriber name, if any.
+///
+/// Returns `None` for empty or whitespace-only names (consistent with
+/// [`register_sub`] rejecting them).
 pub fn lookup_sub(name: &str) -> Option<(String, i32)> {
+    if validate_name(name).is_err() {
+        return None;
+    }
     let map = registry(&SUB_REGISTRY)
         .lock()
         .unwrap_or_else(|p| p.into_inner());
@@ -255,5 +270,37 @@ mod tests {
     fn given_empty_name_error_when_display_then_describes_issue() {
         let err = DiscoveryError::EmptyName;
         assert_eq!(format!("{err}"), "discovery name must not be empty");
+    }
+
+    #[test]
+    fn given_unregistered_name_when_lookup_pub_then_returns_none() {
+        assert_eq!(lookup_pub("test_lookup_pub_nonexistent"), None);
+    }
+
+    #[test]
+    fn given_unregistered_name_when_lookup_sub_then_returns_none() {
+        assert_eq!(lookup_sub("test_lookup_sub_nonexistent"), None);
+    }
+
+    #[test]
+    fn given_whitespace_name_when_register_pub_then_returns_empty_name_error() {
+        let err = register_pub("   ", "aeron:ipc".to_string(), 1).unwrap_err();
+        assert_eq!(err, DiscoveryError::EmptyName);
+    }
+
+    #[test]
+    fn given_whitespace_name_when_register_sub_then_returns_empty_name_error() {
+        let err = register_sub("   ", "aeron:ipc".to_string(), 1).unwrap_err();
+        assert_eq!(err, DiscoveryError::EmptyName);
+    }
+
+    #[test]
+    fn given_empty_name_when_lookup_pub_then_returns_none() {
+        assert_eq!(lookup_pub(""), None);
+    }
+
+    #[test]
+    fn given_empty_name_when_lookup_sub_then_returns_none() {
+        assert_eq!(lookup_sub(""), None);
     }
 }

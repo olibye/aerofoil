@@ -10,14 +10,19 @@ use super::TransportError;
 
 /// Characters that are Aeron URI structural separators and must not appear
 /// in endpoint or control address values.
-const AERON_URI_RESERVED: &[char] = &['|', '?'];
+const AERON_URI_RESERVED: &[char] = &['|', '?', '=', '#'];
 
-/// Validates that an Aeron URI parameter value is non-empty and contains no
-/// reserved separator characters.
+/// Validates that an Aeron URI parameter value is non-empty, contains no
+/// reserved separator characters, and has no whitespace or control characters.
 fn validate_param(label: &str, value: &str) -> Result<(), TransportError> {
     if value.is_empty() {
         return Err(TransportError::Invalid(format!(
             "{label} must not be empty"
+        )));
+    }
+    if let Some(ch) = value.chars().find(|c| c.is_whitespace() || c.is_control()) {
+        return Err(TransportError::Invalid(format!(
+            "{label} contains invalid character '{ch}'"
         )));
     }
     if let Some(ch) = value.chars().find(|c| AERON_URI_RESERVED.contains(c)) {
@@ -31,9 +36,9 @@ fn validate_param(label: &str, value: &str) -> Result<(), TransportError> {
 /// Builders for Aeron channel URI strings.
 ///
 /// Parameterised constructors return `Result<String, TransportError>` and
-/// reject empty values or values containing Aeron URI separator characters
-/// (`|`, `?`) that would corrupt the URI structure. These checks run at
-/// startup, not on the hot path.
+/// reject empty values, values containing Aeron URI separator characters
+/// (`|`, `?`, `=`, `#`), and values with whitespace or control characters.
+/// These checks run at startup, not on the hot path.
 #[derive(Debug)]
 pub struct ChannelUri;
 
@@ -55,7 +60,7 @@ impl ChannelUri {
     /// # Errors
     ///
     /// Returns [`TransportError::Invalid`] if `endpoint` is empty or contains
-    /// Aeron URI separator characters.
+    /// Aeron URI separator characters, whitespace, or control characters.
     ///
     /// # Examples
     ///
@@ -79,7 +84,7 @@ impl ChannelUri {
     /// # Errors
     ///
     /// Returns [`TransportError::Invalid`] if `control` is empty or contains
-    /// Aeron URI separator characters.
+    /// Aeron URI separator characters, whitespace, or control characters.
     ///
     /// # Examples
     ///
@@ -189,6 +194,24 @@ mod tests {
     #[test]
     fn given_channel_uri_when_mdc_subscription_empty_control_then_returns_error() {
         let err = ChannelUri::mdc_subscription("127.0.0.1:40789", "").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_equals_in_endpoint_then_returns_error() {
+        let err = ChannelUri::udp("host:1234=evil").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_hash_in_endpoint_then_returns_error() {
+        let err = ChannelUri::udp("host:1234#frag").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_space_in_endpoint_then_returns_error() {
+        let err = ChannelUri::udp("host 1234").unwrap_err();
         assert!(matches!(err, TransportError::Invalid(_)));
     }
 }
