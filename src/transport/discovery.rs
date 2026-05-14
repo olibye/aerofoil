@@ -2,15 +2,24 @@
 //!
 //! Provides a process-global, in-memory registry that maps logical names to
 //! `(channel, stream_id)` tuples. Applications register their endpoints at
-//! startup and then resolve publishers/subscribers by name rather than
-//! threading channel strings and magic stream IDs through every call site.
+//! startup; consumers either look the registered tuple up directly via
+//! [`lookup_pub`] / [`lookup_sub`], or hand a separately-constructed publisher
+//! (or subscriber) through [`aeron_pub_named`] / [`aeron_sub_discover`] to
+//! assert that the name is known to the registry.
+//!
+//! [`aeron_pub_named`] and [`aeron_sub_discover`] are pass-through guards —
+//! they validate the name and return the supplied publisher/subscriber
+//! unchanged. They do **not** construct a publisher from the registered
+//! `(channel, stream_id)` tuple; callers wire their own backend and use the
+//! registry purely as a name-resolution check. A future story may add a
+//! resolver-style API once a real consumer drives the requirements.
 //!
 //! The registry is intentionally **in-process only** — file or network
 //! discovery is deferred (see story 9.3 Dev Notes).
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use super::{AeronPublisher, AeronSubscriber};
 
@@ -20,8 +29,16 @@ use super::{AeronPublisher, AeronSubscriber};
 pub enum DiscoveryError {
     /// No publisher or subscriber has been registered under the given name.
     Unknown(String),
-    /// Registration rejected because the name is empty.
+    /// Registration or lookup rejected because the name is empty or
+    /// whitespace-only.
     EmptyName,
+    /// Registration or lookup rejected because the name has leading/trailing
+    /// whitespace or contains control characters.
+    InvalidName(String),
+    /// Registration rejected because the channel string is empty.
+    EmptyChannel,
+    /// Registration rejected because `stream_id` is not strictly positive.
+    InvalidStreamId(i32),
 }
 
 impl fmt::Display for DiscoveryError {
@@ -29,6 +46,11 @@ impl fmt::Display for DiscoveryError {
         match self {
             DiscoveryError::Unknown(name) => write!(f, "unknown discovery name: {name}"),
             DiscoveryError::EmptyName => write!(f, "discovery name must not be empty"),
+            DiscoveryError::InvalidName(reason) => write!(f, "invalid discovery name: {reason}"),
+            DiscoveryError::EmptyChannel => write!(f, "discovery channel must not be empty"),
+            DiscoveryError::InvalidStreamId(id) => {
+                write!(f, "discovery stream_id must be > 0, got {id}")
+            }
         }
     }
 }
@@ -44,9 +66,50 @@ fn registry(reg: &'static Registry) -> &'static Mutex<HashMap<String, (String, i
     reg.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn recover<T>(label: &'static str, p: PoisonError<T>) -> T {
+    eprintln!(
+        "aerofoil discovery: {label} registry mutex was poisoned by an earlier panic; \
+         recovering inner state. Map contents may be inconsistent."
+    );
+    p.into_inner()
+}
+
+fn lock_pub() -> MutexGuard<'static, HashMap<String, (String, i32)>> {
+    registry(&PUB_REGISTRY)
+        .lock()
+        .unwrap_or_else(|p| recover("pub", p))
+}
+
+fn lock_sub() -> MutexGuard<'static, HashMap<String, (String, i32)>> {
+    registry(&SUB_REGISTRY)
+        .lock()
+        .unwrap_or_else(|p| recover("sub", p))
+}
+
 fn validate_name(name: &str) -> Result<(), DiscoveryError> {
     if name.is_empty() || name.trim().is_empty() {
         return Err(DiscoveryError::EmptyName);
+    }
+    if name != name.trim() {
+        return Err(DiscoveryError::InvalidName(format!(
+            "leading/trailing whitespace in {name:?}"
+        )));
+    }
+    if let Some(ch) = name.chars().find(|c| c.is_control()) {
+        return Err(DiscoveryError::InvalidName(format!(
+            "control character U+{:04X} in name",
+            ch as u32
+        )));
+    }
+    Ok(())
+}
+
+fn validate_registration(channel: &str, stream_id: i32) -> Result<(), DiscoveryError> {
+    if channel.is_empty() {
+        return Err(DiscoveryError::EmptyChannel);
+    }
+    if stream_id <= 0 {
+        return Err(DiscoveryError::InvalidStreamId(stream_id));
     }
     Ok(())
 }
@@ -59,12 +122,15 @@ fn validate_name(name: &str) -> Result<(), DiscoveryError> {
 ///
 /// # Errors
 ///
-/// Returns [`DiscoveryError::EmptyName`] if `name` is empty or whitespace-only.
+/// - [`DiscoveryError::EmptyName`] if `name` is empty or whitespace-only.
+/// - [`DiscoveryError::InvalidName`] if `name` has leading/trailing whitespace
+///   or contains control characters.
+/// - [`DiscoveryError::EmptyChannel`] if `channel` is empty.
+/// - [`DiscoveryError::InvalidStreamId`] if `stream_id <= 0`.
 pub fn register_pub(name: &str, channel: String, stream_id: i32) -> Result<(), DiscoveryError> {
     validate_name(name)?;
-    let mut map = registry(&PUB_REGISTRY)
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    validate_registration(&channel, stream_id)?;
+    let mut map = lock_pub();
     map.insert(name.to_string(), (channel, stream_id));
     Ok(())
 }
@@ -75,41 +141,37 @@ pub fn register_pub(name: &str, channel: String, stream_id: i32) -> Result<(), D
 ///
 /// # Errors
 ///
-/// Returns [`DiscoveryError::EmptyName`] if `name` is empty or whitespace-only.
+/// Same set as [`register_pub`].
 pub fn register_sub(name: &str, channel: String, stream_id: i32) -> Result<(), DiscoveryError> {
     validate_name(name)?;
-    let mut map = registry(&SUB_REGISTRY)
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    validate_registration(&channel, stream_id)?;
+    let mut map = lock_sub();
     map.insert(name.to_string(), (channel, stream_id));
     Ok(())
 }
 
 /// Returns the registered `(channel, stream_id)` for a publisher name, if any.
 ///
-/// Returns `None` for empty or whitespace-only names (consistent with
-/// [`register_pub`] rejecting them).
+/// Returns `None` for any name that fails [`validate_name`] (empty,
+/// whitespace-only, leading/trailing whitespace, control characters) or that
+/// has not been registered. If you need to distinguish "name invalid" from
+/// "name unregistered", call [`aeron_pub_named`] instead.
 pub fn lookup_pub(name: &str) -> Option<(String, i32)> {
     if validate_name(name).is_err() {
         return None;
     }
-    let map = registry(&PUB_REGISTRY)
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    let map = lock_pub();
     map.get(name).cloned()
 }
 
 /// Returns the registered `(channel, stream_id)` for a subscriber name, if any.
 ///
-/// Returns `None` for empty or whitespace-only names (consistent with
-/// [`register_sub`] rejecting them).
+/// See [`lookup_pub`] for behaviour on invalid names.
 pub fn lookup_sub(name: &str) -> Option<(String, i32)> {
     if validate_name(name).is_err() {
         return None;
     }
-    let map = registry(&SUB_REGISTRY)
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    let map = lock_sub();
     map.get(name).cloned()
 }
 
@@ -118,10 +180,19 @@ pub fn lookup_sub(name: &str) -> Option<(String, i32)> {
 ///
 /// This is a pass-through guard intended for application startup wiring:
 /// callers construct the publisher however their backend requires and then
-/// hand it through `aeron_pub_named` to assert that the logical name is
-/// known to the discovery layer.
+/// hand it through `aeron_pub_named` to assert that the logical name is known
+/// to the discovery layer. The registered `(channel, stream_id)` tuple is
+/// **not** used to configure or rewrap the publisher.
+///
+/// # Errors
+///
+/// - [`DiscoveryError::EmptyName`] / [`DiscoveryError::InvalidName`] if `name`
+///   fails [`validate_name`].
+/// - [`DiscoveryError::Unknown`] if `name` is well-formed but not registered.
 pub fn aeron_pub_named<P: AeronPublisher>(name: &str, publisher: P) -> Result<P, DiscoveryError> {
-    if lookup_pub(name).is_some() {
+    validate_name(name)?;
+    let map = lock_pub();
+    if map.contains_key(name) {
         Ok(publisher)
     } else {
         Err(DiscoveryError::Unknown(name.to_string()))
@@ -130,11 +201,19 @@ pub fn aeron_pub_named<P: AeronPublisher>(name: &str, publisher: P) -> Result<P,
 
 /// Validates that `name` is a registered subscriber and returns the supplied
 /// subscriber unchanged.
+///
+/// See [`aeron_pub_named`] for the pass-through-guard contract.
+///
+/// # Errors
+///
+/// Same set as [`aeron_pub_named`].
 pub fn aeron_sub_discover<S: AeronSubscriber>(
     name: &str,
     subscriber: S,
 ) -> Result<S, DiscoveryError> {
-    if lookup_sub(name).is_some() {
+    validate_name(name)?;
+    let map = lock_sub();
+    if map.contains_key(name) {
         Ok(subscriber)
     } else {
         Err(DiscoveryError::Unknown(name.to_string()))
@@ -146,6 +225,7 @@ mod tests {
     use super::*;
     use crate::transport::{ClaimBuffer, FragmentBuffer, TransportError};
 
+    #[derive(Debug)]
     struct MockPublisher;
 
     impl AeronPublisher for MockPublisher {
@@ -158,6 +238,7 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
     struct MockSubscriber;
 
     impl AeronSubscriber for MockSubscriber {
@@ -273,6 +354,27 @@ mod tests {
     }
 
     #[test]
+    fn given_invalid_name_error_when_display_then_describes_issue() {
+        let err = DiscoveryError::InvalidName("control character U+000A in name".to_string());
+        assert_eq!(
+            format!("{err}"),
+            "invalid discovery name: control character U+000A in name"
+        );
+    }
+
+    #[test]
+    fn given_empty_channel_error_when_display_then_describes_issue() {
+        let err = DiscoveryError::EmptyChannel;
+        assert_eq!(format!("{err}"), "discovery channel must not be empty");
+    }
+
+    #[test]
+    fn given_invalid_stream_id_error_when_display_then_describes_issue() {
+        let err = DiscoveryError::InvalidStreamId(-1);
+        assert_eq!(format!("{err}"), "discovery stream_id must be > 0, got -1");
+    }
+
+    #[test]
     fn given_unregistered_name_when_lookup_pub_then_returns_none() {
         assert_eq!(lookup_pub("test_lookup_pub_nonexistent"), None);
     }
@@ -302,5 +404,83 @@ mod tests {
     #[test]
     fn given_empty_name_when_lookup_sub_then_returns_none() {
         assert_eq!(lookup_sub(""), None);
+    }
+
+    #[test]
+    fn given_leading_whitespace_name_when_register_pub_then_returns_invalid_name() {
+        let err = register_pub(" test_pub_lead", "aeron:ipc".to_string(), 1).unwrap_err();
+        assert!(matches!(err, DiscoveryError::InvalidName(_)));
+    }
+
+    #[test]
+    fn given_trailing_whitespace_name_when_register_sub_then_returns_invalid_name() {
+        let err = register_sub("test_sub_trail ", "aeron:ipc".to_string(), 1).unwrap_err();
+        assert!(matches!(err, DiscoveryError::InvalidName(_)));
+    }
+
+    #[test]
+    fn given_newline_in_name_when_register_pub_then_returns_invalid_name() {
+        let err = register_pub("test_pub\nctrl", "aeron:ipc".to_string(), 1).unwrap_err();
+        assert!(matches!(err, DiscoveryError::InvalidName(_)));
+    }
+
+    #[test]
+    fn given_tab_in_name_when_register_sub_then_returns_invalid_name() {
+        let err = register_sub("test_sub\tctrl", "aeron:ipc".to_string(), 1).unwrap_err();
+        assert!(matches!(err, DiscoveryError::InvalidName(_)));
+    }
+
+    #[test]
+    fn given_empty_channel_when_register_pub_then_returns_empty_channel() {
+        let err = register_pub("test_pub_empty_chan", String::new(), 1).unwrap_err();
+        assert_eq!(err, DiscoveryError::EmptyChannel);
+    }
+
+    #[test]
+    fn given_empty_channel_when_register_sub_then_returns_empty_channel() {
+        let err = register_sub("test_sub_empty_chan", String::new(), 1).unwrap_err();
+        assert_eq!(err, DiscoveryError::EmptyChannel);
+    }
+
+    #[test]
+    fn given_zero_stream_id_when_register_pub_then_returns_invalid_stream_id() {
+        let err = register_pub("test_pub_zero_sid", "aeron:ipc".to_string(), 0).unwrap_err();
+        assert_eq!(err, DiscoveryError::InvalidStreamId(0));
+    }
+
+    #[test]
+    fn given_negative_stream_id_when_register_sub_then_returns_invalid_stream_id() {
+        let err = register_sub("test_sub_neg_sid", "aeron:ipc".to_string(), -3).unwrap_err();
+        assert_eq!(err, DiscoveryError::InvalidStreamId(-3));
+    }
+
+    #[test]
+    fn given_empty_name_when_aeron_pub_named_then_returns_empty_name() {
+        let err = aeron_pub_named("", MockPublisher).unwrap_err();
+        assert_eq!(err, DiscoveryError::EmptyName);
+    }
+
+    #[test]
+    fn given_whitespace_name_when_aeron_pub_named_then_returns_empty_name() {
+        let err = aeron_pub_named("   ", MockPublisher).unwrap_err();
+        assert_eq!(err, DiscoveryError::EmptyName);
+    }
+
+    #[test]
+    fn given_invalid_name_when_aeron_pub_named_then_returns_invalid_name() {
+        let err = aeron_pub_named("test_pub_aeron\nbad", MockPublisher).unwrap_err();
+        assert!(matches!(err, DiscoveryError::InvalidName(_)));
+    }
+
+    #[test]
+    fn given_empty_name_when_aeron_sub_discover_then_returns_empty_name() {
+        let err = aeron_sub_discover("", MockSubscriber).unwrap_err();
+        assert_eq!(err, DiscoveryError::EmptyName);
+    }
+
+    #[test]
+    fn given_invalid_name_when_aeron_sub_discover_then_returns_invalid_name() {
+        let err = aeron_sub_discover(" test_sub_lead", MockSubscriber).unwrap_err();
+        assert!(matches!(err, DiscoveryError::InvalidName(_)));
     }
 }

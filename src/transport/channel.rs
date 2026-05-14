@@ -8,37 +8,88 @@
 
 use super::TransportError;
 
-/// Characters that are Aeron URI structural separators and must not appear
-/// in endpoint or control address values.
-const AERON_URI_RESERVED: &[char] = &['|', '?', '=', '#'];
+/// ASCII punctuation accepted in URI parameter values.
+///
+/// Covers IPv4 host/port (`.`, `:`), bracketed IPv6 (`[`, `]`), DNS hostnames
+/// (`.`, `-`), and identifier characters (`_`). The validator is an
+/// **allowlist** — any character outside this set (including non-ASCII letters,
+/// Unicode invisibles, whitespace, and Aeron URI separators `|?=#,;`) is
+/// rejected.
+const URI_ALLOWED_PUNCT: &[char] = &[':', '[', ']', '.', '-', '_'];
 
-/// Validates that an Aeron URI parameter value is non-empty, contains no
-/// reserved separator characters, and has no whitespace or control characters.
+fn is_uri_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || URI_ALLOWED_PUNCT.contains(&c)
+}
+
+/// Validates an Aeron URI parameter value: non-empty and ASCII allowlist.
 fn validate_param(label: &str, value: &str) -> Result<(), TransportError> {
     if value.is_empty() {
         return Err(TransportError::Invalid(format!(
             "{label} must not be empty"
         )));
     }
-    if let Some(ch) = value.chars().find(|c| c.is_whitespace() || c.is_control()) {
+    if let Some(ch) = value.chars().find(|c| !is_uri_char(*c)) {
         return Err(TransportError::Invalid(format!(
-            "{label} contains invalid character '{ch}'"
-        )));
-    }
-    if let Some(ch) = value.chars().find(|c| AERON_URI_RESERVED.contains(c)) {
-        return Err(TransportError::Invalid(format!(
-            "{label} contains reserved character '{ch}'"
+            "{label} contains invalid character '{ch}' (U+{:04X}); only ASCII alphanumerics and ':[].-_' are permitted",
+            ch as u32
         )));
     }
     Ok(())
 }
 
+/// Validates that `value` is shaped like `host:port` or `[ipv6]:port`.
+///
+/// `port` must parse as a `u16`. Bare IPv6 (multiple colons, no brackets) is
+/// rejected because it is ambiguous: `::1` could mean host `::1` with no port
+/// or host `:` port `:1`.
+fn validate_host_port(label: &str, value: &str) -> Result<(), TransportError> {
+    validate_param(label, value)?;
+
+    let (host, port) = if let Some(rest) = value.strip_prefix('[') {
+        let close = rest.find(']').ok_or_else(|| {
+            TransportError::Invalid(format!(
+                "{label} bracketed IPv6 address missing closing ']' in '{value}'"
+            ))
+        })?;
+        let host = &rest[..close];
+        let after = &rest[close + 1..];
+        let port = after.strip_prefix(':').ok_or_else(|| {
+            TransportError::Invalid(format!(
+                "{label} bracketed IPv6 address must be followed by ':port' in '{value}'"
+            ))
+        })?;
+        (host, port)
+    } else {
+        if value.matches(':').count() != 1 {
+            return Err(TransportError::Invalid(format!(
+                "{label} bare IPv6 must be bracketed like '[::1]:port' (got '{value}')"
+            )));
+        }
+        // Exactly one ':' so split is infallible.
+        value.split_once(':').unwrap()
+    };
+
+    if host.is_empty() {
+        return Err(TransportError::Invalid(format!(
+            "{label} host part must not be empty"
+        )));
+    }
+    port.parse::<u16>().map_err(|_| {
+        TransportError::Invalid(format!(
+            "{label} port '{port}' must be a valid u16 (0-65535)"
+        ))
+    })?;
+    Ok(())
+}
+
 /// Builders for Aeron channel URI strings.
 ///
-/// Parameterised constructors return `Result<String, TransportError>` and
-/// reject empty values, values containing Aeron URI separator characters
-/// (`|`, `?`, `=`, `#`), and values with whitespace or control characters.
-/// These checks run at startup, not on the hot path.
+/// Parameterised constructors return `Result<String, TransportError>`. They
+/// reject inputs that are empty, contain non-ASCII or non-allowlist characters
+/// (Unicode invisibles, whitespace, control chars, Aeron URI separators
+/// `|?=#,;`), or do not match the expected `host:port` shape (with bracketed
+/// IPv6 supported as `[::1]:port`). These checks run at startup, not on the
+/// hot path.
 #[derive(Debug)]
 pub struct ChannelUri;
 
@@ -57,10 +108,12 @@ impl ChannelUri {
 
     /// Returns a UDP unicast channel URI: `aeron:udp?endpoint={endpoint}`.
     ///
+    /// `endpoint` must be `host:port` (or `[ipv6]:port`).
+    ///
     /// # Errors
     ///
-    /// Returns [`TransportError::Invalid`] if `endpoint` is empty or contains
-    /// Aeron URI separator characters, whitespace, or control characters.
+    /// Returns [`TransportError::Invalid`] if `endpoint` is empty, contains
+    /// disallowed characters, or does not match the `host:port` shape.
     ///
     /// # Examples
     ///
@@ -72,7 +125,7 @@ impl ChannelUri {
     /// );
     /// ```
     pub fn udp(endpoint: &str) -> Result<String, TransportError> {
-        validate_param("endpoint", endpoint)?;
+        validate_host_port("endpoint", endpoint)?;
         Ok(format!("aeron:udp?endpoint={endpoint}"))
     }
 
@@ -80,11 +133,12 @@ impl ChannelUri {
     /// `aeron:udp?control={control}|control-mode=dynamic`.
     ///
     /// Use this for the publisher side of a Multi-Destination-Cast stream.
+    /// `control` must be `host:port` (or `[ipv6]:port`).
     ///
     /// # Errors
     ///
-    /// Returns [`TransportError::Invalid`] if `control` is empty or contains
-    /// Aeron URI separator characters, whitespace, or control characters.
+    /// Returns [`TransportError::Invalid`] if `control` is empty, contains
+    /// disallowed characters, or does not match the `host:port` shape.
     ///
     /// # Examples
     ///
@@ -96,7 +150,7 @@ impl ChannelUri {
     /// );
     /// ```
     pub fn mdc_publication(control: &str) -> Result<String, TransportError> {
-        validate_param("control", control)?;
+        validate_host_port("control", control)?;
         Ok(format!("aeron:udp?control={control}|control-mode=dynamic"))
     }
 
@@ -104,11 +158,12 @@ impl ChannelUri {
     /// `aeron:udp?endpoint={endpoint}|control={control}|control-mode=dynamic`.
     ///
     /// Use this for the subscriber side of a Multi-Destination-Cast stream.
+    /// Both `endpoint` and `control` must be `host:port` (or `[ipv6]:port`).
     ///
     /// # Errors
     ///
-    /// Returns [`TransportError::Invalid`] if either parameter is empty or
-    /// contains Aeron URI separator characters.
+    /// Returns [`TransportError::Invalid`] if either parameter is empty,
+    /// contains disallowed characters, or does not match the `host:port` shape.
     ///
     /// # Examples
     ///
@@ -120,8 +175,8 @@ impl ChannelUri {
     /// );
     /// ```
     pub fn mdc_subscription(endpoint: &str, control: &str) -> Result<String, TransportError> {
-        validate_param("endpoint", endpoint)?;
-        validate_param("control", control)?;
+        validate_host_port("endpoint", endpoint)?;
+        validate_host_port("control", control)?;
         Ok(format!(
             "aeron:udp?endpoint={endpoint}|control={control}|control-mode=dynamic"
         ))
@@ -142,6 +197,22 @@ mod tests {
         assert_eq!(
             ChannelUri::udp("127.0.0.1:40123").unwrap(),
             "aeron:udp?endpoint=127.0.0.1:40123"
+        );
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_with_bracketed_ipv6_then_formats_endpoint() {
+        assert_eq!(
+            ChannelUri::udp("[::1]:40123").unwrap(),
+            "aeron:udp?endpoint=[::1]:40123"
+        );
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_with_hostname_then_formats_endpoint() {
+        assert_eq!(
+            ChannelUri::udp("aeron-host.example.com:40123").unwrap(),
+            "aeron:udp?endpoint=aeron-host.example.com:40123"
         );
     }
 
@@ -212,6 +283,86 @@ mod tests {
     #[test]
     fn given_channel_uri_when_udp_space_in_endpoint_then_returns_error() {
         let err = ChannelUri::udp("host 1234").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_comma_in_endpoint_then_returns_error() {
+        let err = ChannelUri::udp("host1:1,host2:2").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_semicolon_in_endpoint_then_returns_error() {
+        let err = ChannelUri::udp("host:1234;evil").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_non_ascii_in_endpoint_then_returns_error() {
+        // Cyrillic 'а' (U+0430) is visually identical to Latin 'a' (U+0061).
+        let err = ChannelUri::udp("\u{0430}.example.com:1234").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_zero_width_space_in_endpoint_then_returns_error() {
+        // U+200B (ZWSP) is not matched by char::is_whitespace.
+        let err = ChannelUri::udp("127.0.0.1:40123\u{200B}").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_no_colon_then_returns_error() {
+        let err = ChannelUri::udp("hostonly").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_bare_ipv6_then_returns_error() {
+        let err = ChannelUri::udp("::1").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_port_too_large_then_returns_error() {
+        let err = ChannelUri::udp("127.0.0.1:65536").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_non_numeric_port_then_returns_error() {
+        let err = ChannelUri::udp("127.0.0.1:abc").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_empty_host_then_returns_error() {
+        let err = ChannelUri::udp(":1234").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_unclosed_bracket_then_returns_error() {
+        let err = ChannelUri::udp("[::1:1234").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_udp_bracket_without_port_then_returns_error() {
+        let err = ChannelUri::udp("[::1]").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_mdc_publication_no_colon_then_returns_error() {
+        let err = ChannelUri::mdc_publication("hostonly").unwrap_err();
+        assert!(matches!(err, TransportError::Invalid(_)));
+    }
+
+    #[test]
+    fn given_channel_uri_when_mdc_subscription_endpoint_no_colon_then_returns_error() {
+        let err = ChannelUri::mdc_subscription("hostonly", "127.0.0.1:40456").unwrap_err();
         assert!(matches!(err, TransportError::Invalid(_)));
     }
 }
